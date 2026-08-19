@@ -183,6 +183,16 @@ def build_memory_context(
     """Build the system message context with candidate profile, Q&A bank, and per-website learnings."""
     parts = []
 
+    resume_context = (BASE_DIR / "resume.md").read_text(encoding="utf-8").strip()
+
+    parts.append(
+        f"""FULL CANDIDATE RESUME:
+        {resume_context}
+
+        Use this resume as factual candidate context when answering application questions.
+        Do not invent experience not supported by the resume, candidate profile, or saved Q&A."""
+            )
+
     # Salary formatting (country-aware)
     sal = profile.get('salary_expectation', {})
     sal_currency = sal.get('currency', 'USD') or 'USD'

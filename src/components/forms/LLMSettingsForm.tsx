@@ -15,7 +15,7 @@ const PROVIDERS: { id: LLMProvider; nameKey: string; descKey: string }[] = [
   { id: "openai_compatible", nameKey: "providers.openai_compatible.name", descKey: "providers.openai_compatible.description" },
 ];
 
-const OPENAI_MODELS = ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"];
+const OPENAI_MODELS = ["gpt-5.4-nano", "gpt-5.4-mini", "gpt-4o","gpt-5.6-luna", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"];
 const ANTHROPIC_MODELS = ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"];
 const GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"];
 const OPENROUTER_FALLBACK_MODELS = [

@@ -28,7 +28,9 @@ from core.config import get_data_dir, load_settings, save_settings, load_profile
 from core.config import load_llm_settings, save_llm_settings
 
 # Project root for data files
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 DEFAULT_PORT = 8743
 MAX_LOG_LINES = 500
 CREDENTIAL_REFRESH_MINUTES = 14
@@ -138,24 +140,37 @@ _rate_limiter = _RateLimiter(max_calls=60, window_seconds=60)
 _rate_limited_prefixes = ("/jobs/collect", "/apply/start", "/apply/stop", "/llm/test", "/auth/login")
 
 _ALLOWED_ORIGINS = {"http://localhost:1420", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "http://127.0.0.1:1420"}
+_DEV_ORIGINS = {"http://localhost:1420", "http://127.0.0.1:1420"}
 
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         _log.info(f"REQ {request.method} {request.url.path} origin='{request.headers.get('Origin', '')}' auth={'yes' if request.headers.get('Authorization') else 'no'}")
         if request.url.path in ("/health", "/chromium/status"):
             return await call_next(request)
+
         origin = request.headers.get("Origin", "")
+
+        if request.url.path == "/dev/token":
+            if origin in _DEV_ORIGINS:
+                return await call_next(request)
+            _log.warning(f"403 blocked dev token origin: '{origin}'")
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+
         if origin and origin not in _ALLOWED_ORIGINS:
             _log.warning(f"403 blocked origin: '{origin}' not in {_ALLOWED_ORIGINS}")
             return JSONResponse({"error": "forbidden"}, status_code=403)
+
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
+
         if token != _API_TOKEN:
             _log.warning(f"401 {request.method} {request.url.path} | got '{token[:8]}...' expected '{_API_TOKEN[:8]}...'")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+
         if any(request.url.path.startswith(p) for p in _rate_limited_prefixes):
             if not _rate_limiter.is_allowed(request.url.path):
                 return JSONResponse({"error": "rate limited"}, status_code=429)
+
         return await call_next(request)
 
 app.add_middleware(_AuthMiddleware)
@@ -189,7 +204,7 @@ def _start_parent_watchdog():
 
         # Grace period: wait 10s before starting checks.
         _time.sleep(10)
-        
+
         while True:
             _time.sleep(5)
             if parent:
@@ -199,7 +214,7 @@ def _start_parent_watchdog():
                 # Fallback to os.getppid() if psutil fails
                 if os.getppid() != parent_pid:
                     break
-        
+
         _log.info("Parent process died — shutting down backend")
         os.kill(os.getpid(), signal.SIGTERM)
 
@@ -456,6 +471,10 @@ async def chromium_status():
     return _chromium_status
 
 
+@app.get("/dev/token")
+async def dev_token():
+    return {"token": _API_TOKEN}
+
 # ── Health ────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
@@ -529,11 +548,11 @@ async def test_llm(settings: dict):
             return {"success": False, "message": "Invalid API key or unauthorized. Check your credentials."}
         if "timeout" in msg.lower() or "connect" in msg.lower():
             return {"success": False, "message": "Connection failed. Check your network and provider settings (is your local LLM server running?)"}
-        
+
         from browser_use.llm.exceptions import ModelProviderError
         if isinstance(e, ModelProviderError):
             return {"success": False, "message": f"LLM Provider Error: {msg}"}
-            
+
         _log.error(f"LLM test failed: {e}", exc_info=True)
         return {"success": False, "message": f"LLM test failed: {msg}"}
 
@@ -2095,13 +2114,13 @@ if __name__ == "__main__":
             app, host="127.0.0.1", port=port, log_level="info",
             lifespan="off",
         )
-        # Fix: uvicorn 0.30+ requires config.load() to be called to initialize 
+        # Fix: uvicorn 0.30+ requires config.load() to be called to initialize
         # internal attributes like ssl, http_protocol_class, etc. when not using run().
         config.load()
         server = uvicorn.Server(config)
         from uvicorn.lifespan.off import LifespanOff
         server.lifespan = LifespanOff(config)
-        
+
         server.install_signal_handlers = lambda: None
         import contextlib as _ctxlib
         server.capture_signals = _ctxlib.contextmanager(lambda: (yield))

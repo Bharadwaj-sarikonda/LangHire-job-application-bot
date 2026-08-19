@@ -38,7 +38,18 @@ function getBaseUrl(): string {
 
 async function getToken(): Promise<string> {
   if (!tokenPromise) {
-    tokenPromise = invoke<string>("get_api_token").catch((e) => {
+    tokenPromise = (
+      "__TAURI_INTERNALS__" in globalThis
+        ? invoke<string>("get_api_token")
+        : fetch(`${getBaseUrl()}/dev/token`).then(async (res) => {
+            if (!res.ok) {
+              const text = await res.text().catch(() => "Unknown error");
+              throw new Error(`API Error ${res.status}: ${text}`);
+            }
+            const data = await res.json() as { token: string };
+            return data.token;
+          })
+    ).catch((e) => {
       tokenPromise = null;
       throw new Error(`Failed to read API token: ${e}`);
     });

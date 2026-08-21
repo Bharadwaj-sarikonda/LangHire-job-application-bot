@@ -48,26 +48,74 @@ def _save_json(path: Path, data):
 def load_profile() -> dict:
     return _load_json(get_data_dir() / "candidate_profile.json", {
         "name": "",
+        "first_name": "",
+        "middle_name": "",
+        "last_name": "",
+
         "email": "",
         "phone": "",
         "phone_country_code": "+1",
         "country": "US",
-        "address": {"street": "", "city": "", "state": "", "zip": "", "country": "USA"},
+        "address": {
+            "street": "",
+            "city": "",
+            "state": "",
+            "zip": "",
+            "country": "USA",
+        },
+
         "work_authorization": "",
         "visa_sponsorship_needed": False,
         "willing_to_relocate": False,
         "preferred_work_mode": "hybrid",
+
         "years_of_experience": 0,
-        "education": {"degree": "", "school": "", "graduation": ""},
+        "years_of_machine_learning_experience": 0,
+        "years_of_generative_ai_experience": 0,
+        "years_of_python_experience": 0,
+        "years_of_aws_experience": 0,
+        "years_of_azure_experience": 0,
+
+        "education": {
+            "degree": "",
+            "school": "",
+            "graduation": "",
+        },
+        "undergraduate_school": "",
+        "undergraduate_degree": "",
+        "undergraduate_graduation": "",
+
         "current_role": "",
         "target_job_titles": [],
         "target_locations": [],
+
         "languages": ["English"],
         "skills": [],
-        "salary_expectation": {"min": 50000, "max": 100000, "currency": "USD", "period": "annual"},
+
+        "salary_expectation": {
+            "min": 50000,
+            "max": 100000,
+            "currency": "USD",
+            "period": "annual",
+        },
         "notice_period": "",
+
         "nationality": "",
+        "country_of_birth": "",
+        "ethnicity": "",
+        "race": "",
+        "gender": "",
+        "marital_status": "",
+        "hispanic_latino": "",
+        "disability_status": "",
+        "veteran_status": "",
+
         "date_of_birth": "",
+
+        "linkedin_url": "",
+        "github_url": "",
+        "portfolio_url": "",
+
         "cover_letter": "",
         "date_format": "MM/DD/YYYY",
         "notes": "",

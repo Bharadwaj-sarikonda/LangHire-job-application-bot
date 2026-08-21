@@ -22,26 +22,58 @@ export interface SalaryExpectation {
 
 export interface CandidateProfile {
   name: string;
+  first_name: string;
+  middle_name: string;
+  last_name: string;
+
   email: string;
   phone: string;
   phone_country_code: string;
   country: string;
   address: Address;
+
   work_authorization: string;
   visa_sponsorship_needed: boolean;
   willing_to_relocate: boolean;
   preferred_work_mode: string;
+
   years_of_experience: number;
+  years_of_machine_learning_experience: number;
+  years_of_generative_ai_experience: number;
+  years_of_python_experience: number;
+  years_of_aws_experience: number;
+  years_of_azure_experience: number;
+
   education: Education;
+  undergraduate_school: string;
+  undergraduate_degree: string;
+  undergraduate_graduation: string;
+
   current_role: string;
   target_job_titles: string[];
   target_locations: string[];
+
   languages: string[];
   skills: string[];
+
   salary_expectation: SalaryExpectation;
   notice_period: string;
+
   nationality: string;
+  country_of_birth: string;
+  ethnicity: string;
+  race: string;
+  gender: string;
+  marital_status: string;
+  hispanic_latino: string;
+  disability_status: string;
+  veteran_status: string;
+
   date_of_birth: string;
+  linkedin_url: string;
+  github_url: string;
+  portfolio_url: string;
+
   cover_letter: string;
   date_format: string;
   notes: string;

@@ -206,27 +206,126 @@ def build_memory_context(
 
     profile_lines = [
         "CANDIDATE PROFILE:",
-        f"Name: {profile['name']}",
-        f"Email: {profile['email']}, Phone: {profile.get('phone_country_code', '')}{profile['phone']}",
-        f"Location: {profile['address']['city']}, {profile['address']['state']} {profile['address']['zip']} {profile['address'].get('country', '')}".strip(),
-        f"Work Authorization: {profile['work_authorization']}, Visa Sponsorship Needed: {profile['visa_sponsorship_needed']}",
-        f"Willing to Relocate: {profile['willing_to_relocate']}, Preferred Work Mode: {profile['preferred_work_mode']}",
-        f"Years of Experience: {profile['years_of_experience']}",
-        f"Education: {profile['education']['degree']} from {profile['education']['school']} ({profile['education']['graduation']})",
-        f"Current Role: {profile['current_role']}",
-        f"Target Locations: {', '.join(profile['target_locations'])}",
-        f"Languages: {', '.join(profile['languages'])}",
-        f"Skills: {', '.join(profile['skills'])}",
+
+        f"Full Name: {profile.get('name', '')}",
+        f"First Name: {profile.get('first_name', '')}",
+        f"Middle Name: {profile.get('middle_name', '')}",
+        f"Last Name: {profile.get('last_name', '')}",
+
+        f"Email: {profile.get('email', '')}, Phone: {profile.get('phone_country_code', '')}{profile.get('phone', '')}",
+
+        f"Location: {profile.get('address', {}).get('city', '')}, "
+        f"{profile.get('address', {}).get('state', '')} "
+        f"{profile.get('address', {}).get('zip', '')} "
+        f"{profile.get('address', {}).get('country', '')}".strip(),
+
+        f"Work Authorization: {profile.get('work_authorization', '')}, "
+        f"Visa Sponsorship Needed: {profile.get('visa_sponsorship_needed', False)}",
+
+        f"Willing to Relocate: {profile.get('willing_to_relocate', False)}, "
+        f"Preferred Work Mode: {profile.get('preferred_work_mode', '')}",
+
+        f"Years of Experience: {profile.get('years_of_experience', 0)}",
+        f"Years of Machine Learning Experience: {profile.get('years_of_machine_learning_experience', 0)}",
+        f"Years of Generative AI Experience: {profile.get('years_of_generative_ai_experience', 0)}",
+        f"Years of Python Experience: {profile.get('years_of_python_experience', 0)}",
+        f"Years of AWS Experience: {profile.get('years_of_aws_experience', 0)}",
+        f"Years of Azure Experience: {profile.get('years_of_azure_experience', 0)}",
+
+        f"Education: "
+        f"{profile.get('education', {}).get('degree', '')} from "
+        f"{profile.get('education', {}).get('school', '')} "
+        f"({profile.get('education', {}).get('graduation', '')})",
+
+        f"Undergraduate Education: "
+        f"{profile.get('undergraduate_degree', '')} from "
+        f"{profile.get('undergraduate_school', '')} "
+        f"({profile.get('undergraduate_graduation', '')})",
+
+        f"Current Role: {profile.get('current_role', '')}",
+        f"Target Locations: {', '.join(profile.get('target_locations', []))}",
+        f"Languages: {', '.join(profile.get('languages', []))}",
+        f"Skills: {', '.join(profile.get('skills', []))}",
+
         f"Salary: {salary_str}",
     ]
-    if profile.get('notice_period'):
-        profile_lines.append(f"Notice Period: {profile['notice_period']}")
     if profile.get('nationality'):
-        profile_lines.append(f"Nationality: {profile['nationality']}")
+     profile_lines.append(f"Nationality: {profile['nationality']}")
+
+    if profile.get('country_of_birth'):
+        profile_lines.append(f"Country of Birth: {profile['country_of_birth']}")
+
+    if profile.get('ethnicity'):
+        profile_lines.append(f"Ethnicity: {profile['ethnicity']}")
+
+    if profile.get('race'):
+        profile_lines.append(f"Race: {profile['race']}")
+
+    if profile.get('gender'):
+        profile_lines.append(f"Gender: {profile['gender']}")
+
+    if profile.get('marital_status'):
+        profile_lines.append(f"Marital Status: {profile['marital_status']}")
+
+    if profile.get('hispanic_latino'):
+        profile_lines.append(
+            f"Hispanic or Latino: {profile['hispanic_latino']}"
+        )
+
+    if profile.get('disability_status'):
+        profile_lines.append(
+            f"Disability Status: {profile['disability_status']}"
+        )
+
+    if profile.get('veteran_status'):
+        profile_lines.append(
+            f"Veteran Status: {profile['veteran_status']}"
+        )
+
+    if profile.get('date_of_birth'):
+        profile_lines.append(
+            f"Date of Birth: {profile['date_of_birth']}"
+        )
+
+    if profile.get('linkedin_url'):
+        profile_lines.append(
+            f"LinkedIn URL: {profile['linkedin_url']}"
+        )
+
+    if profile.get('github_url'):
+        profile_lines.append(
+            f"GitHub URL: {profile['github_url']}"
+        )
+
+    if profile.get('portfolio_url'):
+        profile_lines.append(
+            f"Portfolio URL: {profile['portfolio_url']}"
+        )
+
+    if profile.get('notice_period'):
+        profile_lines.append(
+            f"Notice Period: {profile['notice_period']}"
+        )
+
     if profile.get('notes'):
-        profile_lines.append(f"Notes: {profile['notes']}")
+        profile_lines.append(
+            f"Notes: {profile['notes']}"
+        )
 
     parts.append("\n".join(profile_lines))
+    parts.append(
+    "PROFILE SOURCE-OF-TRUTH INSTRUCTIONS:\n"
+    "For factual personal, demographic, education, work authorization, "
+    "contact, and years-of-experience questions, use the values in "
+    "CANDIDATE PROFILE as the source of truth.\n"
+    "Do not infer or override these values from the resume when an explicit "
+    "profile value is provided.\n"
+    "For demographic questions such as race, ethnicity, gender, Hispanic or "
+    "Latino status, disability status, veteran status, marital status, and "
+    "country of birth, use the saved profile value when available.\n"
+    "Do not choose 'Prefer not to disclose', 'Decline to self-identify', or "
+    "similar options when an explicit profile value is available."
+)
 
     # Country-specific instructions for the agent
     country_instructions = []

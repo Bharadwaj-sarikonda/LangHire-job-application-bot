@@ -10,26 +10,59 @@ import { useTranslation } from "react-i18next";
 
 const defaultProfile: CandidateProfile = {
   name: "",
+  first_name: "",
+  middle_name: "",
+  last_name: "",
+
   email: "",
   phone: "",
   phone_country_code: "+1",
   country: "US",
   address: { street: "", city: "", state: "", zip: "", country: "USA" },
+
   work_authorization: "",
   visa_sponsorship_needed: false,
   willing_to_relocate: false,
   preferred_work_mode: "hybrid",
+
   years_of_experience: 0,
+  years_of_machine_learning_experience: 0,
+  years_of_generative_ai_experience: 0,
+  years_of_python_experience: 0,
+  years_of_aws_experience: 0,
+  years_of_azure_experience: 0,
+
   education: { degree: "", school: "", graduation: "" },
+  undergraduate_school: "",
+  undergraduate_degree: "",
+  undergraduate_graduation: "",
+
   current_role: "",
   target_job_titles: [],
   target_locations: [],
+
   languages: ["English"],
   skills: [],
+
   salary_expectation: { min: 50000, max: 100000, currency: "USD", period: "annual" },
   notice_period: "",
+
   nationality: "",
+  country_of_birth: "",
+  ethnicity: "",
+  race: "",
+  gender: "",
+  marital_status: "",
+  hispanic_latino: "",
+  disability_status: "",
+  veteran_status: "",
+
   date_of_birth: "",
+
+  linkedin_url: "",
+  github_url: "",
+  portfolio_url: "",
+
   cover_letter: "",
   date_format: "MM/DD/YYYY",
   notes: "",
@@ -171,7 +204,29 @@ export default function Profile() {
       {/* Personal Info */}
       <Section title={t("personal.title")}>
         <div className="grid grid-cols-2 gap-4">
-          <Input label={t("personal.fullName")} value={profile.name} onChange={(v) => update("name", v)} />
+         <Input
+            label={t("personal.fullName")}
+            value={profile.name}
+            onChange={(v) => update("name", v)}
+          />
+
+          <Input
+            label="First Name"
+            value={profile.first_name}
+            onChange={(v) => update("first_name", v)}
+          />
+
+          <Input
+            label="Middle Name"
+            value={profile.middle_name}
+            onChange={(v) => update("middle_name", v)}
+          />
+
+          <Input
+            label="Last Name"
+            value={profile.last_name}
+            onChange={(v) => update("last_name", v)}
+          />
           <Input label={t("personal.email")} type="email" value={profile.email} onChange={(v) => update("email", v)} />
           <div>
             <label className="block text-sm font-semibold text-foreground mb-1.5">{t("personal.phone")}</label>
@@ -199,6 +254,70 @@ export default function Profile() {
           {countryConfig?.show_date_of_birth && (
             <Input label={t("personal.dateOfBirth")} value={profile.date_of_birth} onChange={(v) => update("date_of_birth", v)} placeholder={countryConfig.date_format} />
           )}
+              <Input
+              label="Country of Birth"
+              value={profile.country_of_birth}
+              onChange={(v) => update("country_of_birth", v)}
+            />
+
+            <Input
+              label="Ethnicity"
+              value={profile.ethnicity}
+              onChange={(v) => update("ethnicity", v)}
+            />
+
+            <Input
+              label="Race"
+              value={profile.race}
+              onChange={(v) => update("race", v)}
+            />
+
+            <Input
+              label="Gender"
+              value={profile.gender}
+              onChange={(v) => update("gender", v)}
+            />
+
+            <Input
+              label="Marital Status"
+              value={profile.marital_status}
+              onChange={(v) => update("marital_status", v)}
+            />
+
+            <Input
+              label="Hispanic or Latino"
+              value={profile.hispanic_latino}
+              onChange={(v) => update("hispanic_latino", v)}
+            />
+
+            <Input
+              label="Disability Status"
+              value={profile.disability_status}
+              onChange={(v) => update("disability_status", v)}
+            />
+
+            <Input
+              label="Veteran Status"
+              value={profile.veteran_status}
+              onChange={(v) => update("veteran_status", v)}
+            />
+            <Input
+              label="LinkedIn URL"
+              value={profile.linkedin_url}
+              onChange={(v) => update("linkedin_url", v)}
+            />
+
+            <Input
+              label="GitHub URL"
+              value={profile.github_url}
+              onChange={(v) => update("github_url", v)}
+            />
+
+            <Input
+              label="Portfolio URL"
+              value={profile.portfolio_url}
+              onChange={(v) => update("portfolio_url", v)}
+            />
         </div>
       </Section>
 
@@ -253,6 +372,40 @@ export default function Profile() {
           <Checkbox label={t("work.visaSponsorship")} checked={profile.visa_sponsorship_needed} onChange={(v) => update("visa_sponsorship_needed", v)} />
           <Checkbox label={t("work.willingToRelocate")} checked={profile.willing_to_relocate} onChange={(v) => update("willing_to_relocate", v)} />
           <Input label={t("work.yearsOfExperience")} type="number" value={String(profile.years_of_experience)} onChange={(v) => update("years_of_experience", Number(v))} />
+          <Input
+            label="Years of Machine Learning Experience"
+            type="number"
+            value={String(profile.years_of_machine_learning_experience)}
+            onChange={(v) => update("years_of_machine_learning_experience", Number(v))}
+          />
+
+          <Input
+            label="Years of Generative AI Experience"
+            type="number"
+            value={String(profile.years_of_generative_ai_experience)}
+            onChange={(v) => update("years_of_generative_ai_experience", Number(v))}
+          />
+
+          <Input
+            label="Years of Python Experience"
+            type="number"
+            value={String(profile.years_of_python_experience)}
+            onChange={(v) => update("years_of_python_experience", Number(v))}
+          />
+
+          <Input
+            label="Years of AWS Experience"
+            type="number"
+            value={String(profile.years_of_aws_experience)}
+            onChange={(v) => update("years_of_aws_experience", Number(v))}
+          />
+
+          <Input
+            label="Years of Azure Experience"
+            type="number"
+            value={String(profile.years_of_azure_experience)}
+            onChange={(v) => update("years_of_azure_experience", Number(v))}
+          />
           {countryConfig?.show_notice_period && (
             <div>
               <label className="block text-sm font-semibold text-foreground mb-1.5">{t("work.noticePeriod")}</label>
@@ -277,6 +430,23 @@ export default function Profile() {
           <Input label={t("education.degree")} value={profile.education.degree} onChange={(v) => updateNested("education", "degree", v)} />
           <Input label={t("education.school")} value={profile.education.school} onChange={(v) => updateNested("education", "school", v)} />
           <Input label={t("education.graduation")} value={profile.education.graduation} onChange={(v) => updateNested("education", "graduation", v)} />
+          <Input
+            label="Undergraduate School"
+            value={profile.undergraduate_school}
+            onChange={(v) => update("undergraduate_school", v)}
+          />
+
+          <Input
+            label="Undergraduate Degree"
+            value={profile.undergraduate_degree}
+            onChange={(v) => update("undergraduate_degree", v)}
+          />
+
+          <Input
+            label="Undergraduate Graduation"
+            value={profile.undergraduate_graduation}
+            onChange={(v) => update("undergraduate_graduation", v)}
+          />
         </div>
       </Section>
 

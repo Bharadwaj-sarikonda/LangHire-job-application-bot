@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 DEFAULT_PORT = 8743
 MAX_LOG_LINES = 500
 CREDENTIAL_REFRESH_MINUTES = 14
+FETCH_JOB_DESCRIPTIONS = False
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
@@ -855,7 +856,7 @@ async def start_collection(body: CollectRequest):
                 print(f"  Error: {e}")
 
         # Phase 2: Fetch descriptions for collected jobs
-        if not _collection_status.get("cancel_requested"):
+        if FETCH_JOB_DESCRIPTIONS and not _collection_status.get("cancel_requested"):
             jobs = read_jobs()
             needs_desc = [
                 (url, j) for url, j in jobs.items()

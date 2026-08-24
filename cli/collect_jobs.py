@@ -158,19 +158,21 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
         # Default: past week
         search_url += "&f_TPR=r604800"
 
+    await browser.start()
+    page = await browser.must_get_current_page()
+    await page.goto(search_url)
+
     agent = Agent(
         task=(
             f"FIRST — LOGIN CHECK:\n"
-            f"1. Go to https://www.linkedin.com/feed/ to check if you're logged into LinkedIn.\n"
-            f"   - If you see the feed/home page → logged in ✓\n"
+            f"1. The current page is already the pre-filtered LinkedIn job search.\n"
+            f"   - If you see job search results → logged in ✓\n"
             f"   - If you see a login page → WAIT for user to log in manually. Check every 15 seconds (refresh). Wait up to 5 minutes.\n"
             f"2. Open a new tab and go to https://mail.google.com/mail/u/0/#inbox to check Gmail.\n"
             f"   - If you see the Gmail inbox (list of emails) → logged in ✓\n"
             f"   - If you see a Google sign-in page or redirect → WAIT for user to log in manually. Check every 15 seconds. Wait up to 5 minutes.\n"
-            f"3. Close the Gmail tab and switch back to LinkedIn.\n\n"
-            f"THEN: Navigate directly to this pre-filtered search URL:\n"
-            f"{search_url}\n"
-            f"Do NOT re-search or modify the filters. Results are ready.\n\n"
+            f"3. Close the Gmail tab and switch back to LinkedIn.\n"
+            f"4. Continue from the already-open pre-filtered LinkedIn search results. Do NOT navigate to or construct a new jobs/search URL.\n\n"
 
             f"HOW TO COLLECT JOBS — follow this exact process:\n"
             f"1. You will see a list of jobs on the left side of the page.\n"

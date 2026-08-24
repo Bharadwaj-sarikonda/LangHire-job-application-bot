@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Save, FolderOpen, X, Upload, Trash2, Sun, Moon, Monitor } from "lucide-react";
 import { getSettings, saveSettings, getPlugins, togglePlugin, removePlugin, importPlugin } from "../lib/api";
 import { setTelemetryEnabled as setAnalyticsTelemetry } from "../lib/analytics";
@@ -26,11 +26,28 @@ export default function SettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [plugins, setPlugins] = useState<PluginConfig[]>([]);
+  const resumeFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleLanguageChange = async (lang: string) => {
     setCurrentLanguage(lang);
     saveLanguagePreference(lang);
     await loadLanguage(lang || "en");
+  };
+
+  const handleBrowseResume = async () => {
+    if ("__TAURI_INTERNALS__" in window) {
+      const file = await open({
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+
+      if (file) {
+        setResumePath(file as string);
+      }
+
+      return;
+    }
+
+    resumeFileInputRef.current?.click();
   };
 
   useEffect(() => {
@@ -183,11 +200,15 @@ export default function SettingsPage() {
           <input value={resumePath} onChange={(e) => setResumePath(e.target.value)}
             placeholder="/path/to/your/resume.pdf"
             className="input-base flex-1" />
-          <button onClick={async () => {
-              const file = await open({ filters: [{ name: "PDF", extensions: ["pdf"] }] });
-              if (file) setResumePath(file as string);
-            }}
-            className="btn-secondary">
+
+          <input
+            ref={resumeFileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            className="hidden"
+          />
+
+          <button onClick={handleBrowseResume} className="btn-secondary">
             <FolderOpen className="w-4 h-4" /> Browse
           </button>
         </div>

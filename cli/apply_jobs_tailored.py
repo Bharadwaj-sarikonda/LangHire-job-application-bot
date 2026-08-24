@@ -65,6 +65,7 @@ async def fetch_job_description(job: dict, worker_id: int) -> str:
         max_failures=5,
         save_conversation_path=str(LOGS_DIR / f"desc_{job.get('company', 'unknown').replace(' ', '_')}_{job.get('title', '').replace(' ', '_')[:20]}"),
     )
+    agent.tools.set_coordinate_clicking(True)
 
     result = await agent.run()
 

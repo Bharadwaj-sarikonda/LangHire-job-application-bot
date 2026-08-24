@@ -14,7 +14,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -582,6 +582,27 @@ async def get_settings():
 async def update_settings(settings: dict):
     save_settings(settings)
     return {"success": True}
+
+@app.post("/settings/resume")
+async def upload_resume(file: UploadFile = File(...)):
+    filename = Path(file.filename or "resume.pdf").name
+
+    if Path(filename).suffix.lower() != ".pdf":
+        return JSONResponse(
+            {"success": False, "message": "Resume must be a PDF file."},
+            status_code=400,
+        )
+
+    resume_dir = get_data_dir() / "resumes"
+    resume_dir.mkdir(parents=True, exist_ok=True)
+
+    resume_path = resume_dir / filename
+    resume_path.write_bytes(await file.read())
+
+    return {
+        "success": True,
+        "path": str(resume_path.resolve()),
+    }
 
 
 # ── In-process task runner ────────────────────────────────────────────────

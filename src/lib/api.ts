@@ -153,6 +153,27 @@ export async function saveSettings(settings: Partial<AppSettings>) {
   });
 }
 
+export async function uploadResume(file: File) {
+  const token = await getToken();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${getBaseUrl()}/settings/resume`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "Unknown error");
+    throw new Error(`API Error ${res.status}: ${text}`);
+  }
+
+  return res.json() as Promise<{ success: boolean; path: string }>;
+}
+
 // ── Jobs ──────────────────────────────────────────────────────────────────
 export async function getJobs(params?: { status?: string; search?: string; limit?: number }) {
   const qs = new URLSearchParams();

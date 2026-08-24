@@ -209,6 +209,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
         register_done_callback=_agent_on_done,
         save_conversation_path=str(LOGS_DIR / f"collect_{title.replace(' ', '_')}"),
     )
+    agent.tools.set_coordinate_clicking(True)
     _agent_ref["agent"] = agent
 
     result = await agent.run()

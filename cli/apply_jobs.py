@@ -204,7 +204,8 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         apply_instructions = (
             f"{login_preamble}"
             f"THEN: Go to {url} on LinkedIn. Click Apply and follow through to the external application page. "
-            f"Use resume at {resume_path}. Auto-fill all fields from candidate profile.\n\n"
+            f"Use resume at {resume_path}. Auto-fill all fields from candidate profile.\n"
+            f"- For resume/CV uploads, use JavaScript/evaluate if needed to locate or expose the file input, but use the browser's file-upload action to attach the actual file at {resume_path}.\n\n"
             f"NAVIGATING EXTERNAL SITES:\n"
             f"- The LinkedIn 'Apply' button often opens a company careers page, NOT the application form directly.\n"
             f"- You MUST explore the landing page: look for 'Apply Now', 'Submit Application', or similar buttons.\n"
@@ -239,9 +240,17 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             f"{apply_instructions}\n\n"
             f"PERSISTENCE & EFFICIENCY:\n"
             f"- Try at least 3 DIFFERENT approaches before reporting failure.\n"
-            f"- If an element doesn't respond after 2-3 clicks, try a completely different method (keyboard, scrolling, different selector).\n"
-            f"- Do NOT repeat the same failing action more than 3 times — switch strategies.\n"
-            f"- If you've been stuck on the same form field for more than 5 steps, skip it or call done with success=false.\n"
+            f"- If an element doesn't respond after 2-3 attempts, switch to a different interaction method.\n"
+            f"- Do NOT repeat the same failing action more than 3 times.\n"
+            f"- A missing indexed element is NOT a blocker.\n"
+            f"- Prefer normal indexed interactions whenever an element is available.\n"
+            f"- For a visible control that cannot be interacted with normally, try ONE targeted DOM/evaluate approach.\n"
+            f"- If that attempt does not change the page or control state, immediately switch to visual coordinate clicking.\n"
+            f"- If coordinate clicking also fails or is unavailable, then try a deeper DOM/shadow-DOM approach.\n"
+            f"- Do NOT repeatedly try different JavaScript selectors for the same visible control before trying coordinate clicking.\n"
+            f"- After every fallback action, inspect the next browser state or screenshot and verify that the intended value actually changed.\n"
+            f"- Do NOT call done with success=false while the application form is still open unless there is a genuine blocker.\n"
+            f"- Genuine blockers include: CAPTCHA that cannot be completed, missing required factual information that must not be guessed, an inaccessible/broken page after multiple recovery attempts, or an unrecoverable browser failure.\n"
             f"- You have a maximum of 70 steps total. Budget your steps wisely.\n\n"
             f"TRACKING: Include in memory field after submission:\n"
             f'@@JOB_APPLIED: {{"title": "{title}", "company": "{company}", "location": "{job.get("location", "")}"}}\n'
@@ -262,6 +271,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         register_new_step_callback=_on_step_with_limit,
         register_done_callback=_agent_on_done,
     )
+    agent.tools.set_coordinate_clicking(True)
 
     try:
         result = await agent.run()
@@ -280,6 +290,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
 
         # Determine success/failure
         success = result.is_successful()
+        errors = [e for e in result.errors() if e]
 
         # ── Memory extraction (self-learning) ─────────────────────────────
         mem_store = get_memory_store()
@@ -294,21 +305,23 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
                 """Use the user's configured LLM for memory extraction."""
                 import asyncio
                 from browser_use.llm.messages import UserMessage
-                extraction_llm = config.get_llm()
-                loop = asyncio.new_event_loop()
-                try:
-                    resp = loop.run_until_complete(
-                        asyncio.wait_for(
-                            extraction_llm.ainvoke([UserMessage(content=prompt)]),
-                            timeout=30,
-                        )
+
+                async def _call():
+                    extraction_llm = config.get_llm()
+                    resp = await asyncio.wait_for(
+                        extraction_llm.ainvoke([UserMessage(content=prompt)]),
+                        timeout=30,
                     )
                     return resp.completion if hasattr(resp, 'completion') else (resp.content if hasattr(resp, 'content') else str(resp))
-                finally:
-                    loop.close()
 
-            llm_learnings = extract_learnings_via_llm(
-                result, job_url=url, job_title=title, success=success,
+                return asyncio.run(_call())
+
+            llm_learnings = await asyncio.to_thread(
+                extract_learnings_via_llm,
+                result,
+                job_url=url,
+                job_title=title,
+                success=success,
                 llm_call=_llm_call,
             )
             if llm_learnings:
@@ -327,7 +340,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
                 step_count=len(result.history),
                 memories_injected=memories_injected_count,
                 memories_extracted=memories_extracted_count,
-                error_message=(result.errors()[-1][:2000] if result.errors() else None) if not success else None,
+                error_message=(errors[-1][:2000] if errors else None) if not success else None,
             )
         except Exception as metrics_err:
             print(f"    ⚠️  [W{worker_id}] Metrics recording failed (non-fatal): {metrics_err}")
@@ -337,7 +350,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             print(f"  ✅ [W{worker_id}] Applied: {title} at {company}")
             return "applied"
         else:
-            error_msg = result.errors()[-1] if result.errors() else "Agent reported failure"
+            error_msg = errors[-1] if errors else (result.final_result() or "Agent reported failure")
             await save_job_status(url, "failed", error_msg[:2000])
             print(f"  ❌ [W{worker_id}] Failed: {title} at {company} — {error_msg[:100]}")
             return "failed"

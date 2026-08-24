@@ -1,6 +1,7 @@
 # Sai Bharadwaj Sarikonda
 
 GitHub icon github.com/Bharadwaj-sarikonda LinkedIn icon linkedin.com/in/sarikonda-saibharadwaj Email icon bharadwaj.srkd@gmail.com
+
 Phone icon +1(201)492-8580
 
 ## EDUCATION
@@ -19,27 +20,29 @@ _Bachelor of Technology in Electronics and Communication_ Hyderabad, TS, India
 
 NexTech Solutions LLC Tampa, Florida
 
-- Architected and scaled AI-powered web applications using TypeScript, React, and Next.js, enabling intelligent Copilot-driven workflows.
+- Architected and scaled production AI applications and agentic workflows using TypeScript, React, Next.js, and LLMs, owning features end-to-end from architecture through deployment and monitoring.
 
 - Designed and implemented LLM-driven systems using RAG/CAG, building knowledge bases with Azure Blob Storage and PostgreSQL (vector DB) to enable contextual similarity search and retrieval.
 
-- Integrated AI SDKs useChat and orchestrated tool calling frameworks, enabling Copilot to dynamically invoke APIs and automate multi-step workflows.
+- Designed agentic AI orchestration and tool-calling workflows enabling LLMs to invoke internal APIs, reason over context, and automate multi-step workflows.
 
 - Implemented LLM guardrails and validation layers within API pipelines to enforce safe outputs, prevent hallucinations, and ensure reliable system behavior.
 
 - Integrated a headless CMS (Contentful) to manage platform FAQs, building API-driven knowledge retrieval that feeds into the Copilot system to deliver accurate, context-aware responses to user queries.
 
-- Leveraged Azure for telemetry, monitoring, and infrastructure, integrated Contentful APIs for dynamic content delivery.
+- Implemented telemetry, monitoring, and observability for production AI services on Azure to improve reliability and diagnose LLM/application failures.
+
+- Partnered with customers to translate business requirements into production AI workflows and integrations.
 
 **Generative AI Engineer** Feb 2024 – Nov 2025
 
 Indago Technologies Tampa, Florida
 
-- Developed scalable, production-grade web applications using TypeScript, React, and Next.js, delivering responsive interfaces for AI-powered intelligence workflows, deployed on AWS cloud infrastructure.
+- Developed scalable, production-grade web applications using TypeScript, React, Next.js, Node.js, and Python/FastAPI, delivering responsive interfaces for AI-powered intelligence workflows, deployed on AWS cloud infrastructure.
 
-- Built and integrated AI Agents & Copilot systems using LLMs with RAG/CAG pipelines, designing knowledge bases with PostgreSQL (vector DB), embeddings, and similarity search to enable contextual, real-time insights.
+- Built and integrated AI Agents & Copilot systems using LLMs, prompt engineering, RAG/CAG pipelines, PostgreSQL vector databases, embeddings, and similarity search to enable contextual, real-time insights.
 
-- Designed and implemented tool calling architectures, enabling LLM agents to interact with internal APIs, trigger workflows, and automate complex analytical tasks.
+- Designed tool-calling and agent orchestration architectures enabling LLMs to plan multi-step workflows, invoke APIs, retrieve context, and execute actions.
 
 - Established LLM guardrails and safety mechanisms (input/output validation, response filtering, and structured prompting) to ensure secure, controlled, and reliable AI-generated outputs.
 
@@ -80,9 +83,10 @@ Decipher Software Solutions Pvt Ltd Hyderabad, India
 **Languages:** Python, TypeScript, JavaScript, SQL
 **Frontend:** React.js, Next.js, HTML, CSS
 **Backend & APIs:** Node.js, FastAPI, REST APIs, Microservices, Serverless Architecture
-**AI / Machine Learning:** Generative AI, LLMs, Prompt Engineering, AI Agents, RAG/CAG Pipelines, Embeddings, Vector Databases, Scikit-learn, TensorFlow, Keras
+**Generative AI:** LLMs, Prompt Engineering, Agentic AI, AI Agents, Tool Calling, Agent Orchestration, RAG/CAG Pipelines, Embeddings, Vector Databases, LLM Guardrails & Evaluation
 **Databases & Storage:** PostgreSQL, MongoDB, MySQL, Azure Blob Storage
-**Cloud & DevOps:** Google Cloud Platform (GCP), Vertex AI, Google Document AI, AWS, Azure, Docker, CI/CD
+**Cloud & DevOps:** AWS, Azure, Google Cloud Platform (GCP), Vertex AI, Google Document AI, Docker, CI/CD, Monitoring & Observability
+**Machine Learning:** Scikit-learn, TensorFlow, Keras
 **Tools:** Git, Jira, Confluence, Contentful
 
 # PROJECTS

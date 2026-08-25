@@ -160,12 +160,31 @@ def test_create_llm_openrouter():
     assert llm.base_url == "https://openrouter.ai/api/v1"
 
 
+def test_create_llm_openrouter_forwards_session_id():
+    """OpenRouter receives the caller's stable sticky-routing session ID."""
+    llm = llm_factory.create_llm(
+        {"provider": "openrouter", "openrouter": {"api_key": "key", "model": "x/y"}},
+        session_id="agent-run-123",
+    )
+    assert llm.default_headers == {"x-session-id": "agent-run-123"}
+
+
 def test_create_llm_openrouter_default_model():
     """openrouter default model is openai/gpt-4o."""
     llm = llm_factory.create_llm({"provider": "openrouter"})
     assert isinstance(llm, ChatOpenAI)
     assert llm.model == "openai/gpt-4o"
     assert llm.base_url == "https://openrouter.ai/api/v1"
+    assert llm.default_headers is None
+
+
+def test_create_llm_non_openrouter_ignores_session_id():
+    """Sticky routing is OpenRouter-only."""
+    llm = llm_factory.create_llm(
+        {"provider": "openai", "openai": {"api_key": "key", "model": "gpt-4o-mini"}},
+        session_id="agent-run-123",
+    )
+    assert llm.default_headers is None
 
 
 def test_create_llm_openai_compatible():

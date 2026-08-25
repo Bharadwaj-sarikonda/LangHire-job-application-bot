@@ -14,6 +14,7 @@ import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -127,7 +128,8 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     # Always refresh credentials before each job to avoid mid-run expiry
     refresh_credentials()
 
-    llm = config.get_llm()
+    session_id = str(uuid4())
+    llm = config.get_llm(session_id=session_id)
     # Use the shared browser profile in OS data dir (same as login endpoint)
     browser = BrowserSession(user_data_dir=str(BROWSER_PROFILE_DIR), chromium_sandbox=(sys.platform != "linux"))
     mem_store = get_memory_store()

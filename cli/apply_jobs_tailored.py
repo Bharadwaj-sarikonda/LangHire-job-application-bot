@@ -17,6 +17,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,7 +48,8 @@ async def fetch_job_description(job: dict, worker_id: int) -> str:
         return cached
 
     refresh_credentials()
-    llm = config.get_llm()
+    session_id = str(uuid4())
+    llm = config.get_llm(session_id=session_id)
     browser = BrowserSession(user_data_dir=str(BASE_DIR / "browser_profile"), chromium_sandbox=(sys.platform != "linux"))
 
     agent = Agent(

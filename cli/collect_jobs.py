@@ -15,6 +15,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -136,7 +137,8 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
     refresh_credentials()
     _agent_log_start("collect", title)
 
-    llm = config.get_llm()
+    session_id = str(uuid4())
+    llm = config.get_llm(session_id=session_id)
     browser = BrowserSession(user_data_dir=str(BROWSER_PROFILE_DIR), chromium_sandbox=(sys.platform != "linux"))
 
     from urllib.parse import quote
@@ -245,7 +247,8 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
 async def fetch_description_for_job(url: str, job: dict) -> str:
     """Visit a single LinkedIn job page and extract the full description."""
     refresh_credentials()
-    llm = config.get_llm()
+    session_id = str(uuid4())
+    llm = config.get_llm(session_id=session_id)
     browser = BrowserSession(user_data_dir=str(BROWSER_PROFILE_DIR), chromium_sandbox=(sys.platform != "linux"))
 
     title = job.get("title", "Unknown")

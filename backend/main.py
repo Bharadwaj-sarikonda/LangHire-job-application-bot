@@ -828,7 +828,7 @@ async def start_collection(body: CollectRequest):
         llm_settings = load_llm_settings()
         if llm_settings.get("provider"):
             from core.llm_factory import create_llm
-            _config.get_llm = lambda: create_llm(llm_settings)
+            _config.get_llm = lambda session_id=None: create_llm(llm_settings, session_id=session_id)
             print(f"🤖 Using {llm_settings['provider']} LLM from settings")
 
         # Load profile from the app data dir (set via UI), not the project root
@@ -961,7 +961,7 @@ async def start_applying(body: ApplyRequest):
         llm_settings = load_llm_settings()
         if llm_settings.get("provider"):
             from core.llm_factory import create_llm
-            _config.get_llm = lambda: create_llm(llm_settings)
+            _config.get_llm = lambda session_id=None: create_llm(llm_settings, session_id=session_id)
             print(f"🤖 Using {llm_settings['provider']} LLM from settings")
 
         jobs = load_json(JOBS_FILE, {})

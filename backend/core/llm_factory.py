@@ -20,7 +20,7 @@ class _PatchedSession:
         return getattr(self._session, name)
 
 
-def create_llm(settings: dict):
+def create_llm(settings: dict, session_id: str | None = None):
     """Create a browser_use BaseChatModel from settings dict."""
     provider = settings.get("provider", "openai")
 
@@ -102,6 +102,7 @@ def create_llm(settings: dict):
             model=cfg.get("model", "openai/gpt-4o"),
             api_key=cfg.get("api_key", "").strip(),
             base_url="https://openrouter.ai/api/v1",
+            default_headers={"x-session-id": session_id} if session_id else None,
         )
 
     elif provider == "openai_compatible":

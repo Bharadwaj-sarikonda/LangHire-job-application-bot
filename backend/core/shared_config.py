@@ -164,7 +164,7 @@ async def credential_refresh_loop(interval_minutes: int = 14):
         refresh_credentials()
 
 
-def get_llm() -> ChatAWSBedrock:
+def get_llm(session_id: str | None = None) -> ChatAWSBedrock:
     """Create a fresh LLM client with current credentials."""
     session = boto3.Session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
     return ChatAWSBedrock(model=MODEL_ID, session=session)

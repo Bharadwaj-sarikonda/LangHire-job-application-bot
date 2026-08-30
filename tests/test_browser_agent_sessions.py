@@ -107,6 +107,7 @@ def test_browser_agents_enable_coordinate_clicking():
 
 def test_apply_agent_uses_native_reliability_features():
     node = _function_node("cli/apply_jobs.py", "apply_to_job")
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
 
     browser_call = next(
         item
@@ -142,6 +143,19 @@ def test_apply_agent_uses_native_reliability_features():
     assert not any(
         keyword.arg in {"tools", "exclude_tools"} for keyword in agent_call.keywords
     ), "The APPLY agent must retain Browser-Use's native tool set."
+    for native_tool in (
+        "dropdown_options",
+        "select_dropdown",
+        "send_keys",
+        "evaluate",
+        "screenshot",
+    ):
+        assert native_tool in source
+    assert any(keyword.arg == "available_file_paths" for keyword in agent_call.keywords)
+    assert "Never blindly retry an interaction" in source
+    assert "verify the selected value" in source
+    assert "Request a screenshot only when" in source
+    assert "If coordinate clicking fails or is unavailable" in source
 
     assignments = [
         item

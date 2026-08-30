@@ -131,7 +131,11 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     session_id = str(uuid4())
     llm = config.get_llm(session_id=session_id)
     # Use the shared browser profile in OS data dir (same as login endpoint)
-    browser = BrowserSession(user_data_dir=str(BROWSER_PROFILE_DIR), chromium_sandbox=(sys.platform != "linux"))
+    browser = BrowserSession(
+        user_data_dir=str(BROWSER_PROFILE_DIR),
+        chromium_sandbox=(sys.platform != "linux"),
+        cross_origin_iframes=True,
+    )
     mem_store = get_memory_store()
     # Count memories injected for metrics tracking
     domain = mem_store.extract_domain(url)
@@ -228,14 +232,10 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
 
     _agent_log_start("apply", f"{title} at {company}")
 
-    MAX_STEPS = 70
-    _step_count = {"n": 0}
+    MAX_STEPS = 120
 
     def _on_step_with_limit(browser_state, agent_output, step_num):
         _agent_on_step(browser_state, agent_output, step_num)
-        _step_count["n"] += 1
-        if _step_count["n"] >= MAX_STEPS:
-            raise Exception(f"Reached maximum of {MAX_STEPS} steps — stopping to avoid wasting tokens")
 
     agent = Agent(
         task=(
@@ -253,7 +253,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             f"- After every fallback action, inspect the next browser state or screenshot and verify that the intended value actually changed.\n"
             f"- Do NOT call done with success=false while the application form is still open unless there is a genuine blocker.\n"
             f"- Genuine blockers include: CAPTCHA that cannot be completed, missing required factual information that must not be guessed, an inaccessible/broken page after multiple recovery attempts, or an unrecoverable browser failure.\n"
-            f"- You have a maximum of 70 steps total. Budget your steps wisely.\n\n"
+            f"- You have a maximum of {MAX_STEPS} steps total. Budget your steps wisely.\n\n"
             f"TRACKING: Include in memory field after submission:\n"
             f'@@JOB_APPLIED: {{"title": "{title}", "company": "{company}", "location": "{job.get("location", "")}"}}\n'
             f"For each form question: @@QUESTION: {{\"question\": \"...\", \"answer\": \"...\", \"type\": \"...\"}}"
@@ -279,7 +279,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     agent.tools.set_coordinate_clicking(True)
 
     try:
-        result = await agent.run()
+        result = await agent.run(max_steps=MAX_STEPS)
 
         # Extract Q&A from history
         _, new_questions = extract_from_history(result)

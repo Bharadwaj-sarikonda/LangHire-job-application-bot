@@ -275,6 +275,7 @@ async def fetch_description_for_job(url: str, job: dict) -> str:
         max_history_items=10,
         save_conversation_path=str(LOGS_DIR / f"desc_{company.replace(' ', '_')}_{title.replace(' ', '_')[:20]}"),
     )
+    agent.tools.set_coordinate_clicking(True)
 
     result = await agent.run()
 

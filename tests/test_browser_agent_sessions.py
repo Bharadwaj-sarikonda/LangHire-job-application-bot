@@ -84,6 +84,85 @@ def test_browser_agents_share_the_token_efficient_settings():
         assert settings == expected, f"{path}:{function_name}"
 
 
+def test_browser_agents_enable_coordinate_clicking():
+    agent_runs = (
+        ("cli/collect_jobs.py", "collect_for_title"),
+        ("cli/collect_jobs.py", "fetch_description_for_job"),
+        ("cli/apply_jobs.py", "apply_to_job"),
+        ("cli/apply_jobs_tailored.py", "fetch_job_description"),
+    )
+
+    for path, function_name in agent_runs:
+        node = _function_node(path, function_name)
+        coordinate_clicking_calls = [
+            item
+            for item in ast.walk(node)
+            if isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Attribute)
+            and item.func.attr == "set_coordinate_clicking"
+        ]
+        assert len(coordinate_clicking_calls) == 1, f"{path}:{function_name}"
+        assert ast.literal_eval(coordinate_clicking_calls[0].args[0]) is True
+
+
+def test_apply_agent_uses_native_reliability_features():
+    node = _function_node("cli/apply_jobs.py", "apply_to_job")
+
+    browser_call = next(
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "BrowserSession"
+    )
+    browser_settings = {
+        keyword.arg: ast.literal_eval(keyword.value)
+        for keyword in browser_call.keywords
+        if keyword.arg == "cross_origin_iframes"
+    }
+    assert browser_settings == {"cross_origin_iframes": True}
+
+    agent_call = next(
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "Agent"
+    )
+    agent_settings = {
+        keyword.arg: ast.literal_eval(keyword.value)
+        for keyword in agent_call.keywords
+        if keyword.arg in {"use_vision", "loop_detection_enabled", "loop_detection_window"}
+    }
+    assert agent_settings == {
+        "use_vision": "auto",
+        "loop_detection_enabled": True,
+        "loop_detection_window": 5,
+    }
+    assert not any(
+        keyword.arg in {"tools", "exclude_tools"} for keyword in agent_call.keywords
+    ), "The APPLY agent must retain Browser-Use's native tool set."
+
+    assignments = [
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "MAX_STEPS" for target in item.targets)
+    ]
+    assert len(assignments) == 1
+    assert ast.literal_eval(assignments[0].value) == 120
+
+    run_call = next(
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "run"
+    )
+    max_steps = next(keyword.value for keyword in run_call.keywords if keyword.arg == "max_steps")
+    assert isinstance(max_steps, ast.Name) and max_steps.id == "MAX_STEPS"
+
+
 def test_backend_get_llm_overrides_forward_session_id():
     tree = ast.parse((ROOT / "backend/main.py").read_text(encoding="utf-8"))
     overrides = [

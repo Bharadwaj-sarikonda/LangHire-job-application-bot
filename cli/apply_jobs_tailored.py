@@ -62,9 +62,12 @@ async def fetch_job_description(job: dict, worker_id: int) -> str:
             f"Do NOT apply. Just read and extract the description, then call done."
         ),
         llm=llm,
-        use_vision=True,
+        max_actions_per_step=5,
+        use_vision="auto",
         browser_session=browser,
         max_failures=5,
+        max_history_items=10,
+        message_compaction=True,
         save_conversation_path=str(LOGS_DIR / f"desc_{job.get('company', 'unknown').replace(' ', '_')}_{job.get('title', '').replace(' ', '_')[:20]}"),
     )
     agent.tools.set_coordinate_clicking(True)

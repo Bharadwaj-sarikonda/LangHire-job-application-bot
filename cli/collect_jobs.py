@@ -205,10 +205,13 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
             f"{resume_hint}"
         ),
         llm=llm,
-        use_vision=True,
+        max_actions_per_step=5,
+        use_vision="auto",
         llm_call_timeout=300,  # 5 minutes per step
         browser_session=browser,
         max_failures=10,
+        max_history_items=10,
+        message_compaction=True,
         register_new_step_callback=on_step,
         register_done_callback=_agent_on_done,
         save_conversation_path=str(LOGS_DIR / f"collect_{title.replace(' ', '_')}"),
@@ -264,7 +267,8 @@ async def fetch_description_for_job(url: str, job: dict) -> str:
             f"Do NOT apply. Just read and extract the description, then call done."
         ),
         llm=llm,
-        use_vision=True,
+        max_actions_per_step=5,
+        use_vision="auto",
         browser_session=browser,
         max_failures=5,
         message_compaction=True,

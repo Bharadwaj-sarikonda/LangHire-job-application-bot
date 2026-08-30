@@ -259,9 +259,12 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             f"For each form question: @@QUESTION: {{\"question\": \"...\", \"answer\": \"...\", \"type\": \"...\"}}"
         ),
         llm=llm,
-        use_vision=True,
+        max_actions_per_step=5,
+        use_vision="auto",
         llm_call_timeout=300,  # 5 minutes per step
         max_failures=10,
+        max_history_items=10,
+        message_compaction=True,
         loop_detection_enabled=True,
         loop_detection_window=5,
         browser_session=browser,

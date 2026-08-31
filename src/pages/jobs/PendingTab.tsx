@@ -56,6 +56,9 @@ const STATUS_STYLES: Record<JobStatus, { color: string; bg: string }> = {
   in_progress: { color: "text-primary", bg: "bg-[#FFF0F3]" },
 };
 
+// The backend validates this upper bound and reduces it when fewer jobs are selected.
+const PARALLEL_APPLY_WORKERS = 4;
+
 interface PendingTabProps {
   onJobsChanged: () => void;
   stats: JobStats;
@@ -341,7 +344,7 @@ export default function PendingTab({ onJobsChanged, stats }: PendingTabProps) {
     try {
       const res = await startApplying({
         job_urls: [...selectedJobs],
-        workers: 1,
+        workers: PARALLEL_APPLY_WORKERS,
         mode: "all",
       });
       if (!res.success) {

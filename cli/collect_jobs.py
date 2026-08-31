@@ -185,7 +185,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
             f"5. Check if the job has an 'Easy Apply' button (easy_apply: true) or just 'Apply' (easy_apply: false).\n"
             f"6. Output a @@JOB_FOUND marker in your MEMORY field for this job.\n"
             f"7. Click the NEXT job in the list and repeat.\n"
-            f"8. When you reach the bottom of the visible list, scroll down in the left panel to load more jobs.\n\n"
+            f"8. When you reach the bottom of the visible list, scroll down in the left panel to load more jobs. If you have reached the true end of that left results pane and every visible job there is already collected or skipped, use LinkedIn's visible Next button or the next numbered page to continue. Keep the same job title and all current search filters; never edit, clear, or replace them.\n\n"
 
             f"IMPORTANT RULES:\n"
             f"- Output ONE @@JOB_FOUND marker per step in your MEMORY field. Do NOT batch them.\n"

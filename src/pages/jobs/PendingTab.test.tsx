@@ -237,7 +237,7 @@ describe("PendingTab", () => {
 
     await waitFor(() =>
       expect(mockStartApplying).toHaveBeenCalledWith(
-        expect.objectContaining({ job_urls: expect.any(Array), workers: 1, mode: "all" }),
+        expect.objectContaining({ job_urls: expect.any(Array), workers: 4, mode: "all" }),
       ),
     );
   });

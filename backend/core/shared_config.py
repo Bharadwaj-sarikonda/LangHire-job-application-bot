@@ -174,6 +174,20 @@ def normalize_question(q: str) -> str:
     return re.sub(r"[^\w\s]", "", q.lower()).strip()
 
 
+_PROFILE_CONTROLLED_QUESTION_RE = re.compile(
+    r"\b(?:gender|sex|race|ethnic(?:ity)?|hispanic|latino|disabilit(?:y|ies)|"
+    r"veteran|marital|date of birth|birth ?date|country of birth|nationality|"
+    r"citizenship|authorized to work|work authorization|visa sponsorship|"
+    r"sponsorship|over 18|years old|age)\b",
+    re.IGNORECASE,
+)
+
+
+def is_profile_controlled_question(question: str) -> bool:
+    """Return whether an answer must come only from the saved candidate profile."""
+    return bool(_PROFILE_CONTROLLED_QUESTION_RE.search(question or ""))
+
+
 def build_memory_context(
     profile: dict,
     qa: dict,
@@ -324,7 +338,11 @@ def build_memory_context(
     "Latino status, disability status, veteran status, marital status, and "
     "country of birth, use the saved profile value when available.\n"
     "Do not choose 'Prefer not to disclose', 'Decline to self-identify', or "
-    "similar options when an explicit profile value is available."
+    "similar options when an explicit profile value is available.\n"
+    "Never use a learned or pre-filled Q&A answer for these profile-controlled "
+    "questions. Before selecting a demographic or work-authorization option, "
+    "compare its visible text with the candidate profile and select only the "
+    "matching value. If no explicit profile value exists, do not guess."
 )
 
     parts.append(
@@ -356,13 +374,22 @@ def build_memory_context(
     try:
         store = get_memory_store()
         if store:
-            db_qa = store.qa_get_all_for_prompt()
+            qa_domain = store.extract_domain(job_url) if job_url else ""
+            if hasattr(store, "qa_get_for_prompt"):
+                db_qa = store.qa_get_for_prompt(qa_domain)
+            else:
+                # Test doubles and older stores retain the previous API.
+                db_qa = store.qa_get_all_for_prompt()
             if db_qa:
                 qa_for_prompt = db_qa
     except Exception:
         pass
     if qa_for_prompt:
-        qa_list = "\n".join(f'Q: {q}\nA: {a}' for q, a in qa_for_prompt.items() if a)
+        qa_list = "\n".join(
+            f'Q: {q}\nA: {a}'
+            for q, a in qa_for_prompt.items()
+            if a and not is_profile_controlled_question(q)
+        )
         if qa_list:
             parts.append(f"Pre-filled answers for application questions:\n{qa_list}")
 

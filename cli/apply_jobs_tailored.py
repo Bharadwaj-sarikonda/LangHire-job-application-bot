@@ -27,7 +27,7 @@ from browser_use import Agent, BrowserSession
 
 import backend.core.shared_config as config
 from backend.core.shared_config import (
-    BASE_DIR,
+    BROWSER_PROFILE_DIR,
     JOBS_FILE, QA_FILE, CANDIDATE_PROFILE, LOGS_DIR, RESUME_PATH, RESUMES_DIR,
     BLOCKED_DOMAINS, AWS_PROFILE, AWS_REGION, MODEL_ID,
     load_json, refresh_credentials, credential_refresh_loop,
@@ -38,7 +38,7 @@ from backend.core.shared_config import (
 BASE_SKILLS = ["Collaboration", "Problem Solving", "Conflict Resolution", "Microsoft Office Suite", "SQL"]
 
 
-async def fetch_job_description(job: dict, worker_id: int) -> str:
+async def fetch_job_description(job: dict, worker_id: int, browser_profile_dir: Path | None = None) -> str:
     """Use a browser agent to visit the LinkedIn job page and extract the full description."""
     url = job["url"]
 
@@ -50,7 +50,10 @@ async def fetch_job_description(job: dict, worker_id: int) -> str:
     refresh_credentials()
     session_id = str(uuid4())
     llm = config.get_llm(session_id=session_id)
-    browser = BrowserSession(user_data_dir=str(BASE_DIR / "browser_profile"), chromium_sandbox=(sys.platform != "linux"))
+    browser = BrowserSession(
+        user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR),
+        chromium_sandbox=(sys.platform != "linux"),
+    )
 
     agent = Agent(
         task=(
@@ -256,7 +259,7 @@ def customize_resume(job: dict, extra_skills: list[str]) -> str:
     return str(output_path)
 
 
-async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[str], easy_apply: bool, worker_id: int) -> str:
+async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[str], easy_apply: bool, worker_id: int, browser_profile_dir: Path | None = None) -> str:
     """Apply to a single job with a tailored resume. Returns final status."""
     from apply_jobs import apply_to_job as _base_apply
 
@@ -268,7 +271,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     print(f"  📋 [W{worker_id}] Fetching job description...")
     description = ""
     try:
-        description = await fetch_job_description(job, worker_id)
+        description = await fetch_job_description(job, worker_id, browser_profile_dir)
         if description:
             print(f"  📋 [W{worker_id}] Got description ({len(description)} chars)")
     except Exception as e:
@@ -288,10 +291,13 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         print(f"  ⚠️  [W{worker_id}] Resume customization failed: {e}, using base resume")
 
     # --- Step 3: Delegate to shared apply logic ---
-    return await _base_apply(job, profile, qa, applied_labels, easy_apply, worker_id, resume_path_override=resume_path)
+    return await _base_apply(
+        job, profile, qa, applied_labels, easy_apply, worker_id,
+        resume_path_override=resume_path, browser_profile_dir=browser_profile_dir,
+    )
 
 
-async def worker(name: str, worker_id: int, queue: asyncio.Queue, profile: dict, qa: dict, applied_labels: list, easy_apply: bool, stats: dict, cancel_flag: dict | None = None):
+async def worker(name: str, worker_id: int, queue: asyncio.Queue, profile: dict, qa: dict, applied_labels: list, easy_apply: bool, stats: dict, cancel_flag: dict | None = None, browser_profile_dir: Path | None = None):
     """Worker that pulls jobs from queue and applies with tailored resumes."""
     while True:
         if cancel_flag and cancel_flag.get("cancel_requested"):
@@ -302,7 +308,10 @@ async def worker(name: str, worker_id: int, queue: asyncio.Queue, profile: dict,
         except asyncio.QueueEmpty:
             break
 
-        status = await apply_to_job(job, profile, qa, applied_labels, easy_apply, worker_id)
+        status = await apply_to_job(
+            job, profile, qa, applied_labels, easy_apply, worker_id,
+            browser_profile_dir=browser_profile_dir,
+        )
         stats[status] = stats.get(status, 0) + 1
 
         # On retry, put back in queue
@@ -357,18 +366,36 @@ async def main():
     stats = {}
     num_workers = min(args.workers, len(pending))
 
-    # Background credential refresh every 14 min
-    cred_task = asyncio.create_task(credential_refresh_loop(14))
+    from apply_jobs import (
+        create_worker_profiles,
+        remove_stale_worker_profiles,
+        remove_worker_profiles,
+        verify_batch_logins,
+    )
 
-    workers = []
-    for i in range(num_workers):
-        if i > 0:
-            await asyncio.sleep(5)  # stagger browser launches
-        workers.append(
-            asyncio.create_task(worker(f"W{i+1}", i+1, queue, profile, qa, applied_labels, args.easy_apply, stats))
-        )
-    await asyncio.gather(*workers)
-    cred_task.cancel()
+    remove_stale_worker_profiles()
+    print("Checking shared LinkedIn and Gmail login once before starting workers...")
+    if not await verify_batch_logins():
+        print("Login check did not complete. No jobs were started; sign in and run again.")
+        return
+    run_dir, worker_profiles = create_worker_profiles(num_workers)
+    cred_task = asyncio.create_task(credential_refresh_loop(14))
+    try:
+        workers = []
+        for i, worker_profile in enumerate(worker_profiles):
+            if i > 0:
+                await asyncio.sleep(5)  # stagger browser launches
+            workers.append(asyncio.create_task(
+                worker(
+                    f"W{i+1}", i+1, queue, profile, qa, applied_labels,
+                    args.easy_apply, stats, browser_profile_dir=worker_profile,
+                )
+            ))
+        await asyncio.gather(*workers)
+    finally:
+        cred_task.cancel()
+        await asyncio.gather(cred_task, return_exceptions=True)
+        remove_worker_profiles(run_dir)
 
     print(f"\n{'='*60}")
     print(f"Results: {stats}")

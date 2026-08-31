@@ -656,6 +656,7 @@ def _run_async_in_thread(coro_factory, status_dict):
     metrics = _get_metrics_store()
 
     def _worker():
+        loop = None
         capture = _LogCapture(status_dict["log"], status_dict=status_dict,
                               metrics_store=metrics, run_id=run_id)
 
@@ -712,7 +713,13 @@ def _run_async_in_thread(coro_factory, status_dict):
                 status_dict["error"] = str(e)
         finally:
             logging.getLogger().removeHandler(log_handler)
-            loop.close()
+            if loop and not loop.is_closed():
+                pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.close()
             with _status_lock:
                 status_dict["running"] = False
                 status_dict["cancel_requested"] = False
@@ -731,16 +738,16 @@ def _run_async_in_thread(coro_factory, status_dict):
 
 
 def _kill_browser_processes():
-    """Kill any Chromium processes using the shared browser profile.
+    """Kill Chromium processes using the main or temporary worker profiles.
     Uses psutil for cross-platform support (macOS, Linux, Windows)."""
     try:
         import psutil
-        target = "langhire/browser_profile"
+        profile_paths = ("langhire/browser_profile", "langhire/browser_workers")
         procs_to_kill = []
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
                 cmdline = proc.info.get("cmdline") or []
-                if any(target in arg for arg in cmdline):
+                if any(path in arg for arg in cmdline for path in profile_paths):
                     procs_to_kill.append(proc)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
@@ -770,7 +777,7 @@ def _kill_browser_processes():
                 )
             else:
                 subprocess.run(
-                    ["pkill", "-f", "user-data-dir=.*langhire/browser_profile"],
+                    ["pkill", "-f", "user-data-dir=.*langhire/browser_(profile|workers)"],
                     timeout=3, capture_output=True,
                 )
         except Exception:
@@ -1021,19 +1028,34 @@ async def start_applying(body: ApplyRequest):
 
         stats = {}
         num_workers = min(workers, len(pending))
+        # start_applying() already terminated prior worker browsers before this coroutine starts.
+        apply_jobs.remove_stale_worker_profiles()
+        print("Checking shared LinkedIn and Gmail login once before starting workers...")
+        if not await apply_jobs.verify_batch_logins():
+            print("Login check did not complete. No jobs were started; sign in and run again.")
+            return
+        run_dir, worker_profiles = apply_jobs.create_worker_profiles(num_workers)
         cred_task = asyncio.create_task(credential_refresh_loop(CREDENTIAL_REFRESH_MINUTES))
 
         # For mode="all", pass True for easy_apply (agent handles both types via the job URL)
         worker_easy_apply = True if easy_apply_filter is None else easy_apply_filter
-        tasks = []
-        for i in range(num_workers):
-            if i > 0:
-                await asyncio.sleep(5)
-            tasks.append(asyncio.create_task(
-                apply_jobs.worker(f"W{i+1}", i+1, queue, profile, qa, applied_labels, worker_easy_apply, stats, cancel_flag=_apply_status)
-            ))
-        await asyncio.gather(*tasks)
-        cred_task.cancel()
+        try:
+            tasks = []
+            for i, worker_profile in enumerate(worker_profiles):
+                if i > 0:
+                    await asyncio.sleep(5)
+                tasks.append(asyncio.create_task(
+                    apply_jobs.worker(
+                        f"W{i+1}", i+1, queue, profile, qa, applied_labels,
+                        worker_easy_apply, stats, cancel_flag=_apply_status,
+                        browser_profile_dir=worker_profile,
+                    )
+                ))
+            await asyncio.gather(*tasks)
+        finally:
+            cred_task.cancel()
+            await asyncio.gather(cred_task, return_exceptions=True)
+            apply_jobs.remove_worker_profiles(run_dir)
 
         print(f"\nResults: {stats}")
         total_applied = sum(1 for j in load_json(JOBS_FILE, {}).values() if j.get("status") == "applied")

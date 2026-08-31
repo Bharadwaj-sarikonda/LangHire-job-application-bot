@@ -81,7 +81,13 @@ def test_browser_agents_share_the_token_efficient_settings():
             for keyword in agent_call.keywords
             if keyword.arg in expected
         }
-        assert settings == expected, f"{path}:{function_name}"
+        expected_settings = {
+            **expected,
+            "max_actions_per_step": 1
+            if (path, function_name) == ("cli/apply_jobs.py", "apply_to_job")
+            else 5,
+        }
+        assert settings == expected_settings, f"{path}:{function_name}"
 
 
 def test_browser_agents_enable_coordinate_clicking():
@@ -103,6 +109,59 @@ def test_browser_agents_enable_coordinate_clicking():
         ]
         assert len(coordinate_clicking_calls) == 1, f"{path}:{function_name}"
         assert ast.literal_eval(coordinate_clicking_calls[0].args[0]) is True
+
+
+def test_parallel_apply_workers_pass_isolated_browser_profiles():
+    tree = ast.parse((ROOT / "backend/main.py").read_text(encoding="utf-8"))
+    start_apply = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "start_applying"
+    )
+    source = ast.unparse(start_apply)
+    assert "create_worker_profiles(num_workers)" in source
+    assert "browser_profile_dir=worker_profile" in source
+    assert "remove_worker_profiles(run_dir)" in source
+
+
+def test_apply_agents_use_the_worker_specific_profile_when_provided():
+    apply_source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    tailored_source = (ROOT / "cli/apply_jobs_tailored.py").read_text(encoding="utf-8")
+
+    assert "user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR)" in apply_source
+    assert "browser_profile_dir=browser_profile_dir" in tailored_source
+    assert "user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR)" in tailored_source
+
+
+def test_force_stop_targets_temporary_worker_browsers_too():
+    source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+    assert 'profile_paths = ("langhire/browser_profile", "langhire/browser_workers")' in source
+
+
+def test_worker_event_loop_drains_cancelled_tasks_before_closing():
+    source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+    assert "asyncio.gather(*pending, return_exceptions=True)" in source
+
+
+def test_apply_agent_uses_direct_upload_file_instead_of_native_file_chooser():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert "use the built-in upload_file action" in source
+    assert "NEVER use click, coordinate clicking, evaluate, or keyboard input" in source
+    assert "resume_file.is_file()" in source
+    assert "For resume/CV uploads, use JavaScript/evaluate" not in source
+
+
+def test_apply_agent_recovers_from_stale_required_consent_controls():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert "CONSENT CHECKBOXES" in source
+    assert "that index is stale: abandon it" in source
+    assert "Verify a checked state/aria-checked value/checkmark before submitting" in source
+    assert "After two distinct failed consent-control methods" in source
+
+
+def test_linkedin_collector_preserves_filters_when_advancing_pages():
+    source = (ROOT / "cli/collect_jobs.py").read_text(encoding="utf-8")
+    assert "visible Next button or the next numbered page" in source
+    assert "Keep the same job title and all current search filters" in source
 
 
 def test_apply_agent_uses_native_reliability_features():
@@ -164,7 +223,8 @@ def test_apply_agent_uses_native_reliability_features():
         and any(isinstance(target, ast.Name) and target.id == "MAX_STEPS" for target in item.targets)
     ]
     assert len(assignments) == 1
-    assert ast.literal_eval(assignments[0].value) == 120
+    assert isinstance(assignments[0].value, ast.Attribute)
+    assert assignments[0].value.attr == "MAX_STEPS"
 
     run_call = next(
         item
@@ -175,6 +235,33 @@ def test_apply_agent_uses_native_reliability_features():
     )
     max_steps = next(keyword.value for keyword in run_call.keywords if keyword.arg == "max_steps")
     assert isinstance(max_steps, ast.Name) and max_steps.id == "MAX_STEPS"
+    assert any(
+        keyword.arg == "register_should_stop_callback"
+        for keyword in agent_call.keywords
+    )
+
+
+def test_batch_login_is_checked_once_before_worker_profiles_are_created():
+    apply_source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    backend_source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+
+    assert "async def verify_batch_logins" in apply_source
+    assert "if not await verify_batch_logins()" in apply_source
+    assert apply_source.index("await verify_batch_logins()") < apply_source.index(
+        "create_worker_profiles(num_workers)"
+    )
+    assert "if not await apply_jobs.verify_batch_logins()" in backend_source
+
+
+def test_otp_instructions_select_the_latest_message_inside_a_gmail_thread():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert "BOTTOM-most newest message" in source
+    assert "Never use the first code shown in a thread" in source
+
+
+def test_apply_progress_watchdog_fingerprints_browser_use_dom_state():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert '"dom_state"' in source
 
 
 def test_backend_get_llm_overrides_forward_session_id():

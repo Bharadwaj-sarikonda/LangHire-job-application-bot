@@ -43,7 +43,7 @@ export default function QA() {
 
   const handleUpdate = async (id: number, answer: string) => {
     await updateQA(id, answer);
-    setQuestions(prev => prev.map(q => q.id === id ? { ...q, answer } : q));
+    setQuestions(prev => prev.map(q => q.id === id ? { ...q, answer, verified: true } : q));
     trackEvent("qa_answer_updated");
   };
 
@@ -243,6 +243,11 @@ function QACard({
           <span className="px-2 py-0.5 bg-secondary rounded text-[10px] font-semibold text-muted-foreground">
             {entry.question_type}
           </span>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+            entry.verified ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700"
+          }`}>
+            {entry.verified ? "Verified" : "Review to use"}
+          </span>
         </div>
       </div>
 
@@ -258,6 +263,7 @@ function QACard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           {entry.source_domain && <span>{entry.source_domain}</span>}
+          {!entry.verified && <span>Save this answer to approve it for applications.</span>}
           {saving && <span className="text-primary">{t("card.saving")}</span>}
           {!saving && answer !== entry.answer && <span className="text-primary">{t("card.unsaved")}</span>}
         </div>

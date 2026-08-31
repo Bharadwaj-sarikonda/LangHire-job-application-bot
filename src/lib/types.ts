@@ -351,6 +351,7 @@ export interface QAEntry {
   question_type: string;
   source_domain: string;
   times_seen: number;
+  verified: boolean;
   merged_into_id: number | null;
   created_at: string;
   updated_at: string;

@@ -52,6 +52,7 @@ function makeEntry(over: Partial<QAEntry> = {}): QAEntry {
     question_type: "freeform",
     source_domain: "greenhouse.io",
     times_seen: 2,
+    verified: false,
     merged_into_id: null,
     created_at: "2026-01-01",
     updated_at: "2026-01-02",

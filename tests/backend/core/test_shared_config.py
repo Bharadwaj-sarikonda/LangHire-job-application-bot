@@ -252,6 +252,34 @@ def test_extract_from_history_jobs_and_questions():
     assert questions == {"Visa?": "No"}
 
 
+def test_extract_from_history_reads_questions_from_done_action_text():
+    done_text = (
+        '@@QUESTION: {"question": "How many years of Python experience?", '
+        '"answer": "5", "type": "text"}'
+    )
+    item = types.SimpleNamespace(
+        model_output=types.SimpleNamespace(
+            memory="Application submitted.",
+            action=[{"done": {"text": done_text}}],
+        )
+    )
+    _, questions = sc.extract_from_history(_result([item]))
+    assert questions == {"How many years of Python experience?": "5"}
+
+
+def test_extract_from_history_reads_questions_from_done_action_object():
+    """Browser Use action objects expose the final text through ``done.text``."""
+    done_text = '@@QUESTION: {"question": "Years of SQL experience?", "answer": "4"}'
+    item = types.SimpleNamespace(
+        model_output=types.SimpleNamespace(
+            memory="",
+            action=[types.SimpleNamespace(done=types.SimpleNamespace(text=done_text))],
+        )
+    )
+    _, questions = sc.extract_from_history(_result([item]))
+    assert questions == {"Years of SQL experience?": "4"}
+
+
 def test_extract_from_history_dedupes_questions():
     """Questions that normalise identically are deduplicated."""
     mem = (

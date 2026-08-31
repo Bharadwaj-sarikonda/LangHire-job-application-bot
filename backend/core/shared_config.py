@@ -419,33 +419,47 @@ def build_memory_context(
 
 
 def extract_from_history(result):
-    """Extract applied jobs and questions from agent history."""
+    """Extract applied jobs and questions from agent memory and final actions."""
     jobs, questions, seen = [], {}, set()
     for item in result.history:
         if not item.model_output:
             continue
-        memory = item.model_output.memory or ""
-        for m in re.finditer(r"@@JOB_APPLIED:\s*(\{[^}]{1,2000}\})", memory):
-            try:
-                j = json.loads(m.group(1))
-                jobs.append(f"{j.get('title','')} at {j.get('company','')} - {j.get('location','')}")
-            except json.JSONDecodeError:
-                pass
-        for m in re.finditer(r"@@QUESTION:\s*(\{[^}]{1,2000}\})", memory):
-            try:
-                q = json.loads(m.group(1))
-                qtext, ans = q.get("question", "").strip(), q.get("answer", "").strip()
-                norm = normalize_question(qtext)
-                if qtext and norm not in seen:
-                    seen.add(norm)
-                    questions[qtext] = ans
-            except json.JSONDecodeError:
-                pass
-        # Fallback
-        if not jobs and any(kw in memory.lower() for kw in ["application submitted", "successfully applied"]):
-            for pat in [r"applied to (.+?) via", r"Application submitted for (.+?) via"]:
-                match = re.search(pat, memory, re.IGNORECASE)
-                if match:
-                    jobs.append(match.group(1).strip())
-                    break
+        texts = [getattr(item.model_output, "memory", "") or ""]
+        for action in getattr(item.model_output, "action", []) or []:
+            text = getattr(action, "text", "") or ""
+            done = getattr(action, "done", None)
+            if not text and done is not None:
+                text = getattr(done, "text", "") or ""
+                if isinstance(done, dict):
+                    text = done.get("text", "") or ""
+            if not text and isinstance(action, dict):
+                done_data = action.get("done", {})
+                if isinstance(done_data, dict):
+                    text = done_data.get("text", "") or ""
+            if text:
+                texts.append(text)
+
+        for text in texts:
+            for m in re.finditer(r"@@JOB_APPLIED:\s*(\{[^}]{1,2000}\})", text):
+                try:
+                    j = json.loads(m.group(1))
+                    jobs.append(f"{j.get('title','')} at {j.get('company','')} - {j.get('location','')}")
+                except json.JSONDecodeError:
+                    pass
+            for m in re.finditer(r"@@QUESTION:\s*(\{[^}]{1,2000}\})", text):
+                try:
+                    q = json.loads(m.group(1))
+                    qtext, ans = q.get("question", "").strip(), q.get("answer", "").strip()
+                    norm = normalize_question(qtext)
+                    if qtext and norm not in seen:
+                        seen.add(norm)
+                        questions[qtext] = ans
+                except json.JSONDecodeError:
+                    pass
+            if not jobs and any(kw in text.lower() for kw in ["application submitted", "successfully applied"]):
+                for pat in [r"applied to (.+?) via", r"Application submitted for (.+?) via"]:
+                    match = re.search(pat, text, re.IGNORECASE)
+                    if match:
+                        jobs.append(match.group(1).strip())
+                        break
     return list(dict.fromkeys(jobs)), questions

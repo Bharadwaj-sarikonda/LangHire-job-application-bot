@@ -205,7 +205,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
             f"{resume_hint}"
         ),
         llm=llm,
-        max_actions_per_step=5,
+        max_actions_per_step=1,
         use_vision="auto",
         llm_call_timeout=300,  # 5 minutes per step
         browser_session=browser,
@@ -267,7 +267,7 @@ async def fetch_description_for_job(url: str, job: dict) -> str:
             f"Do NOT apply. Just read and extract the description, then call done."
         ),
         llm=llm,
-        max_actions_per_step=5,
+        max_actions_per_step=1,
         use_vision="auto",
         browser_session=browser,
         max_failures=5,

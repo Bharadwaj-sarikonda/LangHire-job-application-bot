@@ -102,8 +102,8 @@ async def verify_batch_logins() -> bool:
                 "Open LinkedIn feed and confirm the feed/home page is visible. Then open Gmail "
                 "and confirm the inbox is visible. If either service shows a sign-in page, wait "
                 "for the user to sign in manually, checking every 15 seconds for up to five minutes. "
-                "Do not apply to jobs, change account settings, or read/send email. Close Gmail when done. "
-                "Call done(success=true) only after both services are confirmed logged in."
+                "Do not apply to jobs, change account settings, read/send email, or attempt to close tabs. "
+                "As soon as both services are confirmed logged in, call done(success=true) immediately."
             ),
             llm=config.get_llm(session_id=str(uuid4())),
             max_actions_per_step=1,
@@ -116,7 +116,7 @@ async def verify_batch_logins() -> bool:
             loop_detection_window=5,
             browser_session=browser,
         )
-        result = await agent.run(max_steps=40)
+        result = await agent.run(max_steps=15)
         if result.is_successful():
             print("✅ Shared LinkedIn and Gmail login check passed")
             return True
@@ -306,6 +306,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             f"EMAIL USAGE:\n"
             f"- For APPLICATION FORM fields (contact email, email address, etc.): use <secret>email</secret>\n"
             f"- For LOGGING IN or CREATING ACCOUNTS on external ATS sites: use <secret>account_email</secret> and <secret>password</secret>\n"
+            f"- SECRET TOKEN INTEGRITY: When entering a secret placeholder, the input text must be EXACTLY the placeholder and nothing else (for example, exactly <secret>email</secret>). Never append commas, braces, quotes, JSON fragments, or explanatory text. After filling an email field, inspect its displayed value. It must be one syntactically valid email address only; if it contains any extra character, clear the field, enter only the exact placeholder once, and verify it before continuing.\n"
             f"{password_note}"
             f"If it's a video funnel or recruitment pitch, report failure and stop. "
             f"If the external form is broken after 3 attempts, report failure and stop.\n\n"

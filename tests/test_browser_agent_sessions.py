@@ -84,7 +84,12 @@ def test_browser_agents_share_the_token_efficient_settings():
         expected_settings = {
             **expected,
             "max_actions_per_step": 1
-            if (path, function_name) == ("cli/apply_jobs.py", "apply_to_job")
+            if (path, function_name) in {
+                ("cli/apply_jobs.py", "apply_to_job"),
+                ("cli/collect_jobs.py", "collect_for_title"),
+                ("cli/collect_jobs.py", "fetch_description_for_job"),
+                ("cli/apply_jobs_tailored.py", "fetch_job_description"),
+            }
             else 5,
         }
         assert settings == expected_settings, f"{path}:{function_name}"
@@ -156,6 +161,13 @@ def test_apply_agent_recovers_from_stale_required_consent_controls():
     assert "that index is stale: abandon it" in source
     assert "Verify a checked state/aria-checked value/checkmark before submitting" in source
     assert "After two distinct failed consent-control methods" in source
+
+
+def test_apply_agent_requires_exact_secret_tokens_and_email_verification():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert "SECRET TOKEN INTEGRITY" in source
+    assert "must be EXACTLY the placeholder and nothing else" in source
+    assert "one syntactically valid email address only" in source
 
 
 def test_linkedin_collector_preserves_filters_when_advancing_pages():
@@ -251,6 +263,13 @@ def test_batch_login_is_checked_once_before_worker_profiles_are_created():
         "create_worker_profiles(num_workers)"
     )
     assert "if not await apply_jobs.verify_batch_logins()" in backend_source
+
+
+def test_batch_login_preflight_finishes_after_verification_without_closing_tabs():
+    source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
+    assert "or attempt to close tabs" in source
+    assert "call done(success=true) immediately" in source
+    assert "result = await agent.run(max_steps=15)" in source
 
 
 def test_otp_instructions_select_the_latest_message_inside_a_gmail_thread():

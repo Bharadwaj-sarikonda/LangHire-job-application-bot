@@ -327,6 +327,15 @@ def build_memory_context(
     "similar options when an explicit profile value is available."
 )
 
+    parts.append(
+        "SCREENING-QUESTION ANSWERING INSTRUCTIONS:\n"
+        "For open-ended application and technical screening questions, write a concise, recruiter-ready answer tailored to the question. "
+        "Use the most relevant evidence from the resume, CANDIDATE PROFILE, and saved Q&A: name the specific technologies, services, responsibilities, outcomes, and scope that are actually supported by those sources. "
+        "For example, when asked about AWS experience, answer whether the candidate has it and mention only the AWS services and work described in the candidate materials. "
+        "Present supported experience clearly and confidently, but never invent, exaggerate, or imply hands-on experience with technologies, projects, metrics, or responsibilities that are not supported. "
+        "Use a saved Q&A answer when it directly answers the question; otherwise synthesize the best accurate answer from the candidate materials."
+    )
+
     # Country-specific instructions for the agent
     country_instructions = []
     country_instructions.append(f"DATE FORMAT: When filling date fields, use {date_format} format.")

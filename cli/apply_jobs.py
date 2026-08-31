@@ -241,8 +241,10 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         task=(
             f"{apply_instructions}\n\n"
             f"PERSISTENCE & EFFICIENCY:\n"
+            f"- At the start of an application, if the form offers an explicit 'Autofill from resume' or equivalent resume-autofill control, use that control first to upload the resume. If no explicit resume-autofill control exists, upload the resume through the ordinary Resume/CV upload control first, since it may autofill fields. After either upload, wait for processing and inspect the refreshed form; fill only fields that remain empty or incorrect.\n"
             f"- Never blindly retry an interaction: if an action does not cause the expected page, field, menu, or button state change, treat that exact method as failed and switch methods immediately.\n"
             f"- After every important field, selection, navigation, or submit action, inspect the next browser state. Request a screenshot only when the state does not clearly identify the target or confirm the result, or before a visual coordinate click. Continue only after confirming the intended value, menu state, validation result, or page transition actually changed.\n"
+            f"- Before clicking any checkbox, radio button, toggle, or selectable option, inspect its current state. If the desired answer is already selected or correct, do not click it again.\n"
             f"- A missing indexed element is NOT a blocker.\n"
             f"- Prefer normal indexed click and input actions first when an element is available.\n"
             f"- For a native dropdown, call dropdown_options, then select_dropdown with the exact desired option, and verify the selected value. For a custom combobox, click it once, use its visible input or send_keys to choose an option, then verify the displayed selection.\n"

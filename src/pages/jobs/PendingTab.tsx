@@ -170,6 +170,14 @@ export default function PendingTab({ onJobsChanged, stats }: PendingTabProps) {
     fetchJobs();
   }, [statusFilter]);
 
+  // A collection can save jobs while this tab remains mounted. Keep card data in
+  // sync with the refreshed aggregate counts so selections and badges agree.
+  useEffect(() => {
+    fetchJobs(true);
+    // fetchJobs intentionally reads the current filter/search values from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats.total, stats.pending, stats.failed, stats.blocked, stats.in_progress]);
+
   // Poll apply status for single apply
   useEffect(() => {
     if (!applyingUrl) return;

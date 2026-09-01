@@ -65,8 +65,8 @@ async def fetch_job_description(job: dict, worker_id: int, browser_profile_dir: 
             f"Do NOT apply. Just read and extract the description, then call done."
         ),
         llm=llm,
-        max_actions_per_step=1,
-        use_vision="auto",
+        max_actions_per_step=5,
+        use_vision="true",
         browser_session=browser,
         max_failures=5,
         max_history_items=10,

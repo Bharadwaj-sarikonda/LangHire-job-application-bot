@@ -63,7 +63,7 @@ def test_browser_agents_share_the_token_efficient_settings():
     )
     expected = {
         "max_actions_per_step": 5,
-        "use_vision": "auto",
+        "use_vision": "true",
         "max_history_items": 10,
         "message_compaction": True,
     }
@@ -84,12 +84,7 @@ def test_browser_agents_share_the_token_efficient_settings():
         expected_settings = {
             **expected,
             "max_actions_per_step": 1
-            if (path, function_name) in {
-                ("cli/apply_jobs.py", "apply_to_job"),
-                ("cli/collect_jobs.py", "collect_for_title"),
-                ("cli/collect_jobs.py", "fetch_description_for_job"),
-                ("cli/apply_jobs_tailored.py", "fetch_job_description"),
-            }
+            if (path, function_name) == ("cli/apply_jobs.py", "apply_to_job")
             else 5,
         }
         assert settings == expected_settings, f"{path}:{function_name}"
@@ -176,6 +171,14 @@ def test_linkedin_collector_preserves_filters_when_advancing_pages():
     assert "Keep the same job title and all current search filters" in source
 
 
+def test_linkedin_collector_keeps_model_memory_compact_and_requires_done_action():
+    source = (ROOT / "cli/collect_jobs.py").read_text(encoding="utf-8")
+    assert "Keep MEMORY under 800 characters" in source
+    assert "Never repeat a running list of job IDs" in source
+    assert "Python deduplicates URLs and counts confirmed saves" in source
+    assert "never return a text-only completion or an empty action" in source
+
+
 def test_apply_agent_uses_native_reliability_features():
     node = _function_node("cli/apply_jobs.py", "apply_to_job")
     source = (ROOT / "cli/apply_jobs.py").read_text(encoding="utf-8")
@@ -207,7 +210,7 @@ def test_apply_agent_uses_native_reliability_features():
         if keyword.arg in {"use_vision", "loop_detection_enabled", "loop_detection_window"}
     }
     assert agent_settings == {
-        "use_vision": "auto",
+        "use_vision": "true",
         "loop_detection_enabled": True,
         "loop_detection_window": 5,
     }

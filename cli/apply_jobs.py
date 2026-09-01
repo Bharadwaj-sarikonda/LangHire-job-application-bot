@@ -106,8 +106,8 @@ async def verify_batch_logins() -> bool:
                 "As soon as both services are confirmed logged in, call done(success=true) immediately."
             ),
             llm=config.get_llm(session_id=str(uuid4())),
-            max_actions_per_step=1,
-            use_vision="auto",
+            max_actions_per_step=5,
+            use_vision="true",
             llm_call_timeout=300,
             max_failures=5,
             max_history_items=10,
@@ -350,7 +350,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         ),
         llm=llm,
         max_actions_per_step=1,
-        use_vision="auto",
+        use_vision="true",
         llm_call_timeout=300,  # 5 minutes per step
         max_failures=10,
         max_history_items=10,

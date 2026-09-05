@@ -74,6 +74,23 @@ def test_normalize_question(raw, expected):
     assert sc.normalize_question(raw) == expected
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is your gender?",
+        "Are you Hispanic or Latino?",
+        "Do you need visa sponsorship?",
+        "What is your date of birth?",
+    ],
+)
+def test_profile_controlled_questions_are_not_eligible_for_learned_qa(question):
+    assert sc.is_profile_controlled_question(question) is True
+
+
+def test_regular_screening_question_can_use_learned_qa():
+    assert sc.is_profile_controlled_question("How many years of Python experience do you have?") is False
+
+
 # ── load_json / save_json ────────────────────────────────────────────────────
 
 def test_load_json_missing_default_list(tmp_path):
@@ -235,6 +252,34 @@ def test_extract_from_history_jobs_and_questions():
     assert questions == {"Visa?": "No"}
 
 
+def test_extract_from_history_reads_questions_from_done_action_text():
+    done_text = (
+        '@@QUESTION: {"question": "How many years of Python experience?", '
+        '"answer": "5", "type": "text"}'
+    )
+    item = types.SimpleNamespace(
+        model_output=types.SimpleNamespace(
+            memory="Application submitted.",
+            action=[{"done": {"text": done_text}}],
+        )
+    )
+    _, questions = sc.extract_from_history(_result([item]))
+    assert questions == {"How many years of Python experience?": "5"}
+
+
+def test_extract_from_history_reads_questions_from_done_action_object():
+    """Browser Use action objects expose the final text through ``done.text``."""
+    done_text = '@@QUESTION: {"question": "Years of SQL experience?", "answer": "4"}'
+    item = types.SimpleNamespace(
+        model_output=types.SimpleNamespace(
+            memory="",
+            action=[types.SimpleNamespace(done=types.SimpleNamespace(text=done_text))],
+        )
+    )
+    _, questions = sc.extract_from_history(_result([item]))
+    assert questions == {"Years of SQL experience?": "4"}
+
+
 def test_extract_from_history_dedupes_questions():
     """Questions that normalise identically are deduplicated."""
     mem = (
@@ -341,6 +386,15 @@ def test_build_memory_context_includes_qa(base_profile, no_op_store):
     """A passed-in Q&A dict (with answers) is rendered into the prompt."""
     ctx = sc.build_memory_context(base_profile, qa={"Q1": "A1", "blank": ""})
     assert "Q: Q1\nA: A1" in ctx
+
+
+def test_build_memory_context_excludes_learned_demographic_answers(base_profile, no_op_store):
+    ctx = sc.build_memory_context(
+        base_profile,
+        qa={"What is your gender?": "Female", "What is your favorite language?": "Python"},
+    )
+    assert "Q: What is your gender?" not in ctx
+    assert "Q: What is your favorite language?\nA: Python" in ctx
     assert "blank" not in ctx  # empty answers are filtered out
 
 

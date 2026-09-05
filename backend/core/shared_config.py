@@ -174,6 +174,20 @@ def normalize_question(q: str) -> str:
     return re.sub(r"[^\w\s]", "", q.lower()).strip()
 
 
+_PROFILE_CONTROLLED_QUESTION_RE = re.compile(
+    r"\b(?:gender|sex|race|ethnic(?:ity)?|hispanic|latino|disabilit(?:y|ies)|"
+    r"veteran|marital|date of birth|birth ?date|country of birth|nationality|"
+    r"citizenship|authorized to work|work authorization|visa sponsorship|"
+    r"sponsorship|over 18|years old|age)\b",
+    re.IGNORECASE,
+)
+
+
+def is_profile_controlled_question(question: str) -> bool:
+    """Return whether an answer must come only from the saved candidate profile."""
+    return bool(_PROFILE_CONTROLLED_QUESTION_RE.search(question or ""))
+
+
 def build_memory_context(
     profile: dict,
     qa: dict,
@@ -324,7 +338,11 @@ def build_memory_context(
     "Latino status, disability status, veteran status, marital status, and "
     "country of birth, use the saved profile value when available.\n"
     "Do not choose 'Prefer not to disclose', 'Decline to self-identify', or "
-    "similar options when an explicit profile value is available."
+    "similar options when an explicit profile value is available.\n"
+    "Never use a learned or pre-filled Q&A answer for these profile-controlled "
+    "questions. Before selecting a demographic or work-authorization option, "
+    "compare its visible text with the candidate profile and select only the "
+    "matching value. If no explicit profile value exists, do not guess."
 )
 
     parts.append(
@@ -356,13 +374,22 @@ def build_memory_context(
     try:
         store = get_memory_store()
         if store:
-            db_qa = store.qa_get_all_for_prompt()
+            qa_domain = store.extract_domain(job_url) if job_url else ""
+            if hasattr(store, "qa_get_for_prompt"):
+                db_qa = store.qa_get_for_prompt(qa_domain)
+            else:
+                # Test doubles and older stores retain the previous API.
+                db_qa = store.qa_get_all_for_prompt()
             if db_qa:
                 qa_for_prompt = db_qa
     except Exception:
         pass
     if qa_for_prompt:
-        qa_list = "\n".join(f'Q: {q}\nA: {a}' for q, a in qa_for_prompt.items() if a)
+        qa_list = "\n".join(
+            f'Q: {q}\nA: {a}'
+            for q, a in qa_for_prompt.items()
+            if a and not is_profile_controlled_question(q)
+        )
         if qa_list:
             parts.append(f"Pre-filled answers for application questions:\n{qa_list}")
 
@@ -392,33 +419,47 @@ def build_memory_context(
 
 
 def extract_from_history(result):
-    """Extract applied jobs and questions from agent history."""
+    """Extract applied jobs and questions from agent memory and final actions."""
     jobs, questions, seen = [], {}, set()
     for item in result.history:
         if not item.model_output:
             continue
-        memory = item.model_output.memory or ""
-        for m in re.finditer(r"@@JOB_APPLIED:\s*(\{[^}]{1,2000}\})", memory):
-            try:
-                j = json.loads(m.group(1))
-                jobs.append(f"{j.get('title','')} at {j.get('company','')} - {j.get('location','')}")
-            except json.JSONDecodeError:
-                pass
-        for m in re.finditer(r"@@QUESTION:\s*(\{[^}]{1,2000}\})", memory):
-            try:
-                q = json.loads(m.group(1))
-                qtext, ans = q.get("question", "").strip(), q.get("answer", "").strip()
-                norm = normalize_question(qtext)
-                if qtext and norm not in seen:
-                    seen.add(norm)
-                    questions[qtext] = ans
-            except json.JSONDecodeError:
-                pass
-        # Fallback
-        if not jobs and any(kw in memory.lower() for kw in ["application submitted", "successfully applied"]):
-            for pat in [r"applied to (.+?) via", r"Application submitted for (.+?) via"]:
-                match = re.search(pat, memory, re.IGNORECASE)
-                if match:
-                    jobs.append(match.group(1).strip())
-                    break
+        texts = [getattr(item.model_output, "memory", "") or ""]
+        for action in getattr(item.model_output, "action", []) or []:
+            text = getattr(action, "text", "") or ""
+            done = getattr(action, "done", None)
+            if not text and done is not None:
+                text = getattr(done, "text", "") or ""
+                if isinstance(done, dict):
+                    text = done.get("text", "") or ""
+            if not text and isinstance(action, dict):
+                done_data = action.get("done", {})
+                if isinstance(done_data, dict):
+                    text = done_data.get("text", "") or ""
+            if text:
+                texts.append(text)
+
+        for text in texts:
+            for m in re.finditer(r"@@JOB_APPLIED:\s*(\{[^}]{1,2000}\})", text):
+                try:
+                    j = json.loads(m.group(1))
+                    jobs.append(f"{j.get('title','')} at {j.get('company','')} - {j.get('location','')}")
+                except json.JSONDecodeError:
+                    pass
+            for m in re.finditer(r"@@QUESTION:\s*(\{[^}]{1,2000}\})", text):
+                try:
+                    q = json.loads(m.group(1))
+                    qtext, ans = q.get("question", "").strip(), q.get("answer", "").strip()
+                    norm = normalize_question(qtext)
+                    if qtext and norm not in seen:
+                        seen.add(norm)
+                        questions[qtext] = ans
+                except json.JSONDecodeError:
+                    pass
+            if not jobs and any(kw in text.lower() for kw in ["application submitted", "successfully applied"]):
+                for pat in [r"applied to (.+?) via", r"Application submitted for (.+?) via"]:
+                    match = re.search(pat, text, re.IGNORECASE)
+                    if match:
+                        jobs.append(match.group(1).strip())
+                        break
     return list(dict.fromkeys(jobs)), questions

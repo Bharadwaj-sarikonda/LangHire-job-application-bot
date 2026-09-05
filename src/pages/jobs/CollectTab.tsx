@@ -81,10 +81,17 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
   useEffect(() => {
     let active = true;
     let wasRunning = collecting;
+    let lastCollected = collected;
     const poll = setInterval(() => {
       getCollectionStatus()
         .then((s) => {
           if (!active) return;
+          const confirmedCollected = s.collected || 0;
+          // The backend increments this only after a job is saved to disk.
+          if (s.running && confirmedCollected > lastCollected) {
+            onJobsChanged();
+          }
+          lastCollected = confirmedCollected;
           if (wasRunning && !s.running) {
             trackEvent("collection_completed", { jobs_collected: s.collected || 0 });
             onJobsChanged();
@@ -100,7 +107,7 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
       active = false;
       clearInterval(poll);
     };
-  }, [collecting, onJobsChanged]);
+  }, [collecting, collected, onJobsChanged]);
 
   // Auto-scroll log
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CollectTab from "./CollectTab";
 import {
@@ -80,6 +80,7 @@ describe("CollectTab", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -144,6 +145,20 @@ describe("CollectTab", () => {
     // Stop button (destructive) shows when running.
     expect(await screen.findByRole("button", { name: /collector\.stop/ })).toBeInTheDocument();
     expect(screen.getByText("line 1")).toBeInTheDocument();
+  });
+
+  it("refreshes parent job counts after a confirmed collection save", async () => {
+    vi.useFakeTimers();
+    mockStatus
+      .mockResolvedValueOnce(structuredClone(idleStatus) as never)
+      .mockResolvedValueOnce({ ...idleStatus, running: true, collected: 1 } as never);
+
+    render(<CollectTab onJobsChanged={onJobsChanged} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(onJobsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("stops a running collection", async () => {

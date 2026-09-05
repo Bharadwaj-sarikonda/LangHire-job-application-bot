@@ -571,11 +571,52 @@ def test_qa_auto_squash(store):
 
 
 def test_qa_get_all_for_prompt(store):
-    """Only answered canonical questions are surfaced for prompt injection."""
-    store.qa_add("Q1", answer="A1")
+    """Only reviewed global canonical questions are surfaced for prompts."""
+    q1 = store.qa_add("Q1", answer="A1")
     store.qa_add("Q2", answer="")  # unanswered, excluded
+    assert store.qa_get_all_for_prompt() == {}
+    assert store.qa_update(q1["id"], "A1") is True
     out = store.qa_get_all_for_prompt()
     assert out == {"Q1": "A1"}
+
+
+def test_qa_prompt_answers_are_scoped_to_the_current_ats(store):
+    global_answer = store.qa_add("Global question", answer="Global answer")
+    greenhouse = store.qa_add(
+        "Greenhouse question", answer="Greenhouse answer", source_domain="greenhouse.io"
+    )
+    workday = store.qa_add(
+        "Workday question", answer="Workday answer", source_domain="myworkdayjobs.com"
+    )
+    for entry in (global_answer, greenhouse, workday):
+        assert store.qa_update(entry["id"], entry["answer"])
+
+    assert store.qa_get_for_prompt("greenhouse.io") == {
+        "Global question": "Global answer",
+        "Greenhouse question": "Greenhouse answer",
+    }
+    assert store.qa_get_for_prompt("myworkdayjobs.com") == {
+        "Global question": "Global answer",
+        "Workday question": "Workday answer",
+    }
+
+
+def test_qa_same_question_is_kept_separate_for_different_ats(store):
+    greenhouse = store.qa_add(
+        "How many years of experience do you have?",
+        answer="3 years",
+        source_domain="greenhouse.io",
+    )
+    workday = store.qa_add(
+        "How many years of experience do you have?",
+        answer="5 years",
+        source_domain="myworkdayjobs.com",
+    )
+
+    assert greenhouse is not None
+    assert workday is not None
+    assert greenhouse["id"] != workday["id"]
+    assert len(store.qa_list()) == 2
 
 
 def test_token_overlap_edge_cases():
@@ -615,10 +656,10 @@ def test_separate_stores_have_isolated_dbs(tmp_path):
 
 
 def test_schema_version_recorded(store):
-    """Migrations advance schema_version to 2 (qa_repository present)."""
+    """Migrations advance schema_version to 3 (reviewed Q&A present)."""
     conn = store._get_conn()
     version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == 2
+    assert version == 3
     # qa_repository table exists.
     tables = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}

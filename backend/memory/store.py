@@ -244,6 +244,20 @@ class MemoryStore:
             conn.execute("INSERT OR REPLACE INTO schema_version VALUES (2)")
             self._migrate_qa_json()
 
+        # Learned answers must be reviewed before they are allowed to steer a
+        # different application.  Existing entries predate this safeguard, so
+        # they deliberately start unverified rather than being trusted by
+        # default.  Editing an answer in the Q&A UI verifies it.
+        if current_version < 3:
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(qa_repository)").fetchall()
+            }
+            if "verified" not in columns:
+                conn.execute(
+                    "ALTER TABLE qa_repository ADD COLUMN verified INTEGER DEFAULT 0"
+                )
+            conn.execute("INSERT OR REPLACE INTO schema_version VALUES (3)")
+
         conn.commit()
 
     # ── Domain / ATS helpers ──────────────────────────────────────────────
@@ -649,7 +663,9 @@ class MemoryStore:
         now = datetime.now(timezone.utc).isoformat()
 
         existing = conn.execute(
-            "SELECT id, times_seen FROM qa_repository WHERE normalized = ? AND merged_into_id IS NULL", (normalized,)
+            "SELECT id, times_seen FROM qa_repository "
+            "WHERE normalized = ? AND source_domain = ? AND merged_into_id IS NULL",
+            (normalized, source_domain),
         ).fetchone()
         if existing:
             conn.execute("UPDATE qa_repository SET times_seen = times_seen + 1, updated_at = ? WHERE id = ?", (now, existing["id"]))
@@ -657,7 +673,11 @@ class MemoryStore:
             return None
 
         # Fuzzy match against existing canonical questions
-        all_qs = conn.execute("SELECT id, normalized FROM qa_repository WHERE merged_into_id IS NULL").fetchall()
+        all_qs = conn.execute(
+            "SELECT id, normalized FROM qa_repository "
+            "WHERE source_domain = ? AND merged_into_id IS NULL",
+            (source_domain,),
+        ).fetchall()
         for row in all_qs:
             if self._token_overlap(normalized, row["normalized"]) > 0.85:
                 conn.execute("UPDATE qa_repository SET times_seen = times_seen + 1, updated_at = ? WHERE id = ?", (now, row["id"]))
@@ -669,7 +689,11 @@ class MemoryStore:
             (question, normalized, answer, question_type, source_domain, now, now)
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM qa_repository WHERE normalized = ? AND merged_into_id IS NULL", (normalized,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM qa_repository "
+            "WHERE normalized = ? AND source_domain = ? AND merged_into_id IS NULL",
+            (normalized, source_domain),
+        ).fetchone()
         return dict(row) if row else None
 
     def qa_list(self, search: str = "", unanswered_only: bool = False) -> list[dict]:
@@ -693,7 +717,10 @@ class MemoryStore:
     def qa_update(self, qa_id: int, answer: str) -> bool:
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute("UPDATE qa_repository SET answer = ?, updated_at = ? WHERE id = ?", (answer, now, qa_id))
+        conn.execute(
+            "UPDATE qa_repository SET answer = ?, verified = 1, updated_at = ? WHERE id = ?",
+            (answer, now, qa_id),
+        )
         conn.commit()
         return conn.total_changes > 0
 
@@ -717,7 +744,10 @@ class MemoryStore:
     def qa_auto_squash(self) -> int:
         """Run fuzzy dedup across all unmerged questions. Returns number of merges."""
         conn = self._get_conn()
-        rows = conn.execute("SELECT id, normalized, times_seen FROM qa_repository WHERE merged_into_id IS NULL ORDER BY times_seen DESC").fetchall()
+        rows = conn.execute(
+            "SELECT id, normalized, source_domain, times_seen FROM qa_repository "
+            "WHERE merged_into_id IS NULL ORDER BY times_seen DESC"
+        ).fetchall()
         merged_count = 0
         merged_ids: set[int] = set()
         now = datetime.now(timezone.utc).isoformat()
@@ -728,6 +758,8 @@ class MemoryStore:
             for b in rows[i + 1:]:
                 if b["id"] in merged_ids:
                     continue
+                if a["source_domain"] != b["source_domain"]:
+                    continue
                 if self._token_overlap(a["normalized"], b["normalized"]) > 0.85:
                     conn.execute("UPDATE qa_repository SET merged_into_id = ?, updated_at = ? WHERE id = ?", (a["id"], now, b["id"]))
                     conn.execute("UPDATE qa_repository SET times_seen = times_seen + ?, updated_at = ? WHERE id = ?", (b["times_seen"], now, a["id"]))
@@ -737,8 +769,22 @@ class MemoryStore:
         conn.commit()
         return merged_count
 
-    def qa_get_all_for_prompt(self) -> dict[str, str]:
-        """Get all canonical Q&A pairs as a dict for agent prompt injection."""
+    def qa_get_for_prompt(self, source_domain: str = "") -> dict[str, str]:
+        """Get reviewed Q&A for this ATS plus manually imported global answers.
+
+        ``source_domain`` is normalized by :meth:`extract_domain`, so answers
+        learned on one Workday/Greenhouse site are available to that ATS but
+        are not injected into unrelated applications.
+        """
         conn = self._get_conn()
-        rows = conn.execute("SELECT question, answer FROM qa_repository WHERE merged_into_id IS NULL AND answer != ''").fetchall()
+        rows = conn.execute(
+            "SELECT question, answer FROM qa_repository "
+            "WHERE merged_into_id IS NULL AND answer != '' AND verified = 1 "
+            "AND (source_domain = '' OR source_domain = ?)",
+            (source_domain,),
+        ).fetchall()
         return {r["question"]: r["answer"] for r in rows}
+
+    def qa_get_all_for_prompt(self) -> dict[str, str]:
+        """Compatibility wrapper for callers that explicitly request global Q&A."""
+        return self.qa_get_for_prompt()

@@ -166,6 +166,21 @@ describe("PendingTab", () => {
     expect(screen.queryByText("Applied One")).not.toBeInTheDocument();
   });
 
+  it("refreshes visible cards when confirmed collection counts change", async () => {
+    const { rerender } = render(<PendingTab onJobsChanged={onJobsChanged} stats={stats} />);
+    await screen.findByText("Backend Engineer");
+    mockGetJobs.mockClear();
+
+    rerender(
+      <PendingTab
+        onJobsChanged={onJobsChanged}
+        stats={{ ...stats, total: stats.total + 1, pending: stats.pending + 1 }}
+      />,
+    );
+
+    await waitFor(() => expect(mockGetJobs).toHaveBeenCalled());
+  });
+
   it("opens the apply confirm dialog and starts a single apply on confirm", async () => {
     const user = userEvent.setup();
     render(<PendingTab onJobsChanged={onJobsChanged} stats={stats} />);
@@ -237,7 +252,7 @@ describe("PendingTab", () => {
 
     await waitFor(() =>
       expect(mockStartApplying).toHaveBeenCalledWith(
-        expect.objectContaining({ job_urls: expect.any(Array), workers: 1, mode: "all" }),
+        expect.objectContaining({ job_urls: expect.any(Array), workers: 4, mode: "all" }),
       ),
     );
   });

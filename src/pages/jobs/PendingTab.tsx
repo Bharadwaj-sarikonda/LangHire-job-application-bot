@@ -56,6 +56,9 @@ const STATUS_STYLES: Record<JobStatus, { color: string; bg: string }> = {
   in_progress: { color: "text-primary", bg: "bg-[#FFF0F3]" },
 };
 
+// The backend validates this upper bound and reduces it when fewer jobs are selected.
+const PARALLEL_APPLY_WORKERS = 4;
+
 interface PendingTabProps {
   onJobsChanged: () => void;
   stats: JobStats;
@@ -166,6 +169,14 @@ export default function PendingTab({ onJobsChanged, stats }: PendingTabProps) {
   useEffect(() => {
     fetchJobs();
   }, [statusFilter]);
+
+  // A collection can save jobs while this tab remains mounted. Keep card data in
+  // sync with the refreshed aggregate counts so selections and badges agree.
+  useEffect(() => {
+    fetchJobs(true);
+    // fetchJobs intentionally reads the current filter/search values from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats.total, stats.pending, stats.failed, stats.blocked, stats.in_progress]);
 
   // Poll apply status for single apply
   useEffect(() => {
@@ -341,7 +352,7 @@ export default function PendingTab({ onJobsChanged, stats }: PendingTabProps) {
     try {
       const res = await startApplying({
         job_urls: [...selectedJobs],
-        workers: 1,
+        workers: PARALLEL_APPLY_WORKERS,
         mode: "all",
       });
       if (!res.success) {

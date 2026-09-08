@@ -845,19 +845,24 @@ async def start_collection(body: CollectRequest):
 
         titles = [title] if title else profile.get("target_job_titles", [])
         cred_task = asyncio.create_task(credential_refresh_loop(CREDENTIAL_REFRESH_MINUTES))
+        new_jobs_this_run = 0
 
         for i, t in enumerate(titles):
             if _collection_status.get("cancel_requested"):
                 print("🛑 Stop requested — halting collection")
                 break
+            if max_jobs > 0 and new_jobs_this_run >= max_jobs:
+                break
             print(f"\n{'='*60}")
             print(f"[{i+1}/{len(titles)}] Collecting: {t}")
             print(f"{'='*60}")
             try:
-                found = await collect_jobs.collect_for_title(t, jobs, profile, max_jobs=max_jobs, filters=filters)
+                remaining = max_jobs - new_jobs_this_run if max_jobs > 0 else 0
+                found = await collect_jobs.collect_for_title(t, jobs, profile, max_jobs=remaining, filters=filters)
+                new_jobs_this_run += len(found)
+                with _status_lock:
+                    _collection_status["collected"] = new_jobs_this_run
                 jobs = read_jobs()
-                # Don't increment collected here — it's already updated by the stdout/log handler
-                # parsing "total this title: N" and "N jobs collected" from agent output
                 print(f"  Found {len(found)} new jobs (total: {len(jobs)})")
             except Exception as e:
                 print(f"  Error: {e}")

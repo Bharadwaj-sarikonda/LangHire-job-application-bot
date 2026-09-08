@@ -626,7 +626,6 @@ class _LogCapture(io.StringIO):
         self._run_id = run_id
 
     def write(self, s):
-        import re as _re
         for line in s.splitlines():
             line = self._ansi_re.sub("", line).strip()
             if line:
@@ -634,10 +633,6 @@ class _LogCapture(io.StringIO):
                     self._log.append(line)
                     if len(self._log) > self._max:
                         del self._log[:len(self._log) - self._max // 2]
-                    if self._status is not None and "💾" in line:
-                        m = _re.search(r"total this title:\s*(\d+)", line)
-                        if m:
-                            self._status["collected"] = int(m.group(1))
                 if self._metrics and self._run_id:
                     try:
                         level = "ERROR" if "❌" in line else "WARNING" if "⚠️" in line else "INFO"
@@ -663,7 +658,6 @@ def _run_async_in_thread(coro_factory, status_dict):
         class _ListHandler(logging.Handler):
             _noise = {"httpx", "httpcore", "urllib3", "filelock", "websockets",
                        "charset_normalizer", "botocore", "boto3", "s3transfer"}
-            _collected_re = __import__("re").compile(r"(\d+)\s+jobs?\s+collected", __import__("re").IGNORECASE)
             _ansi_re = __import__("re").compile(r"\x1b\[[0-9;]*m")
             def emit(self, record):
                 if record.name.split(".")[0] in self._noise:
@@ -674,10 +668,6 @@ def _run_async_in_thread(coro_factory, status_dict):
                         status_dict["log"].append(msg)
                         if len(status_dict["log"]) > MAX_LOG_LINES:
                             del status_dict["log"][:MAX_LOG_LINES // 2]
-                        if "collected" in status_dict:
-                            m = self._collected_re.search(msg)
-                            if m:
-                                status_dict["collected"] = max(status_dict.get("collected", 0), int(m.group(1)))
                     if metrics and run_id:
                         try:
                             level = record.levelname
@@ -814,8 +804,12 @@ async def start_collection(body: CollectRequest):
     """Start job collection in-process (no subprocess, no external Python needed)."""
     global _collection_thread, _collection_status
 
-    if _collection_status["running"]:
-        return {"success": False, "message": "Collection already running"}
+    with _status_lock:
+        if _collection_status["running"]:
+            return {"success": False, "message": "Collection already running"}
+        if _apply_status["running"]:
+            return {"success": False, "message": "Cannot collect while applications are running"}
+        _collection_status = {"running": True, "title": body.title or "all titles", "log": ["Starting collection... This may take several minutes per job title."], "collected": 0, "max_jobs": body.max_jobs}
 
     # Kill any leftover browser processes from previous runs
     _kill_browser_processes()
@@ -823,8 +817,6 @@ async def start_collection(body: CollectRequest):
     title = body.title
     max_jobs = body.max_jobs
     filters = body.filters or {}
-    _collection_status = {"running": True, "title": title or "all titles", "log": ["Starting collection... This may take several minutes per job title."], "collected": 0, "max_jobs": max_jobs}
-
     async def _do_collect():
         """Run collection logic directly, bypassing argparse."""
         from core.shared_config import LOGS_DIR, read_jobs, refresh_credentials, credential_refresh_loop
@@ -842,6 +834,15 @@ async def start_collection(body: CollectRequest):
         profile = load_profile()
         jobs = read_jobs()
         LOGS_DIR.mkdir(exist_ok=True)
+        collected_total = 0
+        collection_errors = []
+
+        def _record_collected(saved_count: int, _title_total: int):
+            """Expose only jobs confirmed written to jobs.json to the UI."""
+            nonlocal collected_total
+            collected_total += saved_count
+            with _status_lock:
+                _collection_status["collected"] = collected_total
 
         titles = [title] if title else profile.get("target_job_titles", [])
         cred_task = asyncio.create_task(credential_refresh_loop(CREDENTIAL_REFRESH_MINUTES))
@@ -850,17 +851,30 @@ async def start_collection(body: CollectRequest):
             if _collection_status.get("cancel_requested"):
                 print("🛑 Stop requested — halting collection")
                 break
+            if max_jobs > 0 and collected_total >= max_jobs:
+                break
             print(f"\n{'='*60}")
             print(f"[{i+1}/{len(titles)}] Collecting: {t}")
             print(f"{'='*60}")
             try:
-                found = await collect_jobs.collect_for_title(t, jobs, profile, max_jobs=max_jobs, filters=filters)
+                found = await collect_jobs.collect_for_title(
+                    t,
+                    jobs,
+                    profile,
+                    max_jobs=max_jobs - collected_total if max_jobs > 0 else 0,
+                    filters=filters,
+                    on_job_saved=_record_collected,
+                )
                 jobs = read_jobs()
-                # Don't increment collected here — it's already updated by the stdout/log handler
-                # parsing "total this title: N" and "N jobs collected" from agent output
+                # The callback updates progress as each record is written. Set
+                # it again after the run as a safety net for late history
+                # extraction, and never use the model's self-reported total.
+                with _status_lock:
+                    _collection_status["collected"] = collected_total
                 print(f"  Found {len(found)} new jobs (total: {len(jobs)})")
             except Exception as e:
                 print(f"  Error: {e}")
+                collection_errors.append(f"{t}: {e}")
 
         # Phase 2: Fetch descriptions for collected jobs
         if FETCH_JOB_DESCRIPTIONS and not _collection_status.get("cancel_requested"):
@@ -897,6 +911,8 @@ async def start_collection(body: CollectRequest):
         pending = sum(1 for j in jobs.values() if j.get("status") == "pending")
         descs = sum(1 for j in jobs.values() if j.get("description"))
         print(f"\nCollection complete! Total: {len(jobs)} (Easy Apply: {easy}), Pending: {pending}, With descriptions: {descs}")
+        if collection_errors:
+            raise RuntimeError("Collection completed with errors: " + "; ".join(collection_errors))
 
     def make_coro():
         return _do_collect()
@@ -936,24 +952,30 @@ async def start_applying(body: ApplyRequest):
     """Start job application in-process."""
     global _apply_thread, _apply_status
 
-    if _apply_status["running"]:
-        return {"success": False, "message": "Application already running"}
-
-    # Kill any leftover browser processes from previous runs
-    _kill_browser_processes()
-
     workers = body.workers
     mode = body.mode
     limit = body.limit
     target_job_url = body.job_url
     target_job_urls = body.job_urls
 
-    if target_job_url:
-        _apply_status = {"running": True, "mode": mode, "workers": 1, "log": [f"Applying to single job..."]}
-    elif target_job_urls:
-        _apply_status = {"running": True, "mode": mode, "workers": workers, "log": [f"Applying to {len(target_job_urls)} selected jobs..."]}
-    else:
-        _apply_status = {"running": True, "mode": mode, "workers": workers, "log": [f"Starting {mode} apply with {workers} worker(s)..."]}
+    with _status_lock:
+        if _apply_status["running"]:
+            return {"success": False, "message": "Application already running"}
+        if _collection_status["running"]:
+            return {"success": False, "message": "Cannot apply while collection is running"}
+        if target_job_url:
+            log = "Applying to single job..."
+            status_workers = 1
+        elif target_job_urls:
+            log = f"Applying to {len(target_job_urls)} selected jobs..."
+            status_workers = workers
+        else:
+            log = f"Starting {mode} apply with {workers} worker(s)..."
+            status_workers = workers
+        _apply_status = {"running": True, "mode": mode, "workers": status_workers, "log": [log]}
+
+    # Kill any leftover browser processes from previous runs
+    _kill_browser_processes()
 
     # mode="all" applies to all pending jobs regardless of easy_apply status
     easy_apply_filter = None if mode == "all" else (mode != "external")
@@ -1185,7 +1207,7 @@ async def update_job_status(body: dict):
 async def add_job_manually(body: dict):
     """Manually add a job URL to the collection queue."""
     from datetime import datetime, timezone
-    from core.shared_config import read_jobs, write_jobs, validate_job_url
+    from core.shared_config import add_job_if_new, validate_job_url
 
     url = body.get("url", "").strip()
     if not url:
@@ -1193,11 +1215,7 @@ async def add_job_manually(body: dict):
     if not validate_job_url(url):
         return _api_error("invalid_url", "Invalid or internal URL", 400)
 
-    jobs = read_jobs()
-    if url in jobs:
-        return _api_error("duplicate", "Job already exists in the queue", 409)
-
-    jobs[url] = {
+    record = {
         "url": url,
         "title": body.get("title", "").strip() or "Manually Added",
         "company": body.get("company", "").strip() or "",
@@ -1209,7 +1227,8 @@ async def add_job_manually(body: dict):
         "applied_at": None,
         "error": None,
     }
-    write_jobs(jobs)
+    if not add_job_if_new(url, record):
+        return _api_error("duplicate", "Job already exists in the queue", 409)
     return {"success": True, "url": url}
 
 

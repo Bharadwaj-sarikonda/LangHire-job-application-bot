@@ -132,6 +132,27 @@ def test_apply_agents_use_the_worker_specific_profile_when_provided():
     assert "user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR)" in tailored_source
 
 
+def test_apply_browser_stays_alive_through_post_run_verification():
+    node = _function_node("cli/apply_jobs.py", "apply_to_job")
+    browser_call = next(
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "BrowserSession"
+    )
+    settings = {
+        keyword.arg: ast.literal_eval(keyword.value)
+        for keyword in browser_call.keywords
+        if keyword.arg == "keep_alive"
+    }
+    assert settings == {"keep_alive": True}
+
+    source = ast.unparse(node)
+    assert source.index("agent.run") < source.index("verify_submission")
+    assert "browser.close" in source
+
+
 def test_force_stop_targets_temporary_worker_browsers_too():
     source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
     assert 'profile_paths = ("langhire/browser_profile", "langhire/browser_workers")' in source
@@ -148,6 +169,13 @@ def test_apply_agent_uses_direct_upload_file_instead_of_native_file_chooser():
     assert "NEVER use click, coordinate clicking, evaluate, or keyboard input" in source
     assert "resume_file.is_file()" in source
     assert "For resume/CV uploads, use JavaScript/evaluate" not in source
+
+
+def test_collection_uses_live_listing_metadata_without_narrative_fallbacks():
+    source = (ROOT / "cli/collect_jobs.py").read_text(encoding="utf-8")
+    assert "read_linkedin_job_listing(browser)" in source
+    assert "_fallback_job_from_text" not in source
+    assert "Bare job IDs" not in source
 
 
 def test_apply_agent_recovers_from_stale_required_consent_controls():

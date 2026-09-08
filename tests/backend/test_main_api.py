@@ -374,6 +374,14 @@ class TestJobs:
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "duplicate"
 
+    def test_add_linkedin_url_variant_with_same_job_id_409(self, auth_client):
+        canonical = "https://www.linkedin.com/jobs/view/4463624853/"
+        variant = "https://www.linkedin.com/jobs/search/?currentJobId=4463624853&keywords=python"
+        assert auth_client.post("/jobs/add", json={"url": canonical}).status_code == 200
+        resp = auth_client.post("/jobs/add", json={"url": variant})
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "duplicate"
+
     def test_update_status_unknown_job_404(self, auth_client):
         resp = auth_client.put(
             "/jobs/status",
@@ -669,6 +677,18 @@ class TestCollectApplyValidation:
     def test_apply_rejects_too_many_workers(self, auth_client):
         resp = auth_client.post("/apply/start", json={"mode": "easy", "workers": 99})
         assert resp.status_code == 422
+
+    def test_collect_rejects_while_apply_is_running(self, auth_client, monkeypatch):
+        monkeypatch.setattr(main, "_apply_status", {"running": True, "log": []})
+        monkeypatch.setattr(main, "_collection_status", {"running": False, "log": []})
+        body = auth_client.post("/jobs/collect", json={}).json()
+        assert body == {"success": False, "message": "Cannot collect while applications are running"}
+
+    def test_apply_rejects_while_collection_is_running(self, auth_client, monkeypatch):
+        monkeypatch.setattr(main, "_apply_status", {"running": False, "log": []})
+        monkeypatch.setattr(main, "_collection_status", {"running": True, "log": []})
+        body = auth_client.post("/apply/start", json={"mode": "easy"}).json()
+        assert body == {"success": False, "message": "Cannot apply while collection is running"}
 
 
 # ── Generic 404 ───────────────────────────────────────────────────────────────

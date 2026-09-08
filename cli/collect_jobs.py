@@ -11,6 +11,7 @@ Usage:
 """
 import argparse
 import asyncio
+import json
 import re
 import sys
 from datetime import datetime, timezone
@@ -27,17 +28,19 @@ try:
     from core.shared_config import (
         JOBS_FILE, CANDIDATE_PROFILE, LOGS_DIR, BASE_DIR, BROWSER_PROFILE_DIR,
         load_json, save_json, refresh_credentials, credential_refresh_loop,
-        read_jobs, write_jobs, update_job,
+        read_jobs, write_jobs, update_job, add_job_if_new, job_identity, linkedin_job_id,
     )
     from core.agent_logger import on_step as _agent_on_step, on_done as _agent_on_done, log_run_start as _agent_log_start
+    from core.browser_use_playwright import read_linkedin_job_listing
 except ImportError:
     import backend.core.shared_config as config
     from backend.core.shared_config import (
         JOBS_FILE, CANDIDATE_PROFILE, LOGS_DIR, BASE_DIR, BROWSER_PROFILE_DIR,
         load_json, save_json, refresh_credentials, credential_refresh_loop,
-        read_jobs, write_jobs, update_job,
+        read_jobs, write_jobs, update_job, add_job_if_new, job_identity, linkedin_job_id,
     )
     from backend.core.agent_logger import on_step as _agent_on_step, on_done as _agent_on_done, log_run_start as _agent_log_start
+    from backend.core.browser_use_playwright import read_linkedin_job_listing
 
 
 def load_jobs() -> dict:
@@ -48,9 +51,38 @@ def save_jobs(jobs: dict):
     write_jobs(jobs)
 
 
-async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_jobs: int = 0, filters: dict | None = None) -> list[dict]:
+def _job_from_step(text: str, live_url: str) -> dict | None:
+    """Accept one complete marker only when its ID matches this step's live page."""
+    markers = re.findall(r"@@JOB_FOUND:\s*(\{[^}]{1,2000}\})", text or "")
+    if len(markers) != 1:
+        return None
+    try:
+        job = json.loads(markers[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    live_id = linkedin_job_id(live_url)
+    marker_id = linkedin_job_id(str(job.get("url", "")))
+    values = {field: str(job.get(field, "")).strip() for field in ("title", "company")}
+    if not live_id or marker_id != live_id or not all(values.values()):
+        return None
+    return {
+        **job,
+        **values,
+        "location": str(job.get("location", "")).strip(),
+        "url": f"https://www.linkedin.com/jobs/view/{live_id}/",
+    }
+
+
+async def collect_for_title(
+    title: str,
+    existing_jobs: dict,
+    profile: dict,
+    max_jobs: int = 0,
+    filters: dict | None = None,
+    on_job_saved=None,
+) -> list[dict]:
     """Use an agent to collect job listings for a single title."""
-    import json as _json, re as _re
     from datetime import datetime, timezone
 
     locations = ", ".join(profile["target_locations"])
@@ -71,63 +103,55 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
             + "\n".join(known_urls[-50:])
         )
 
-    seen_urls = set(existing_jobs.keys())
+    seen_jobs = {job_identity(url) for url in existing_jobs}
     found = []
 
-    def _extract_jobs_from_text(text: str):
-        """Parse jobs from a text block and save new ones immediately."""
-        new_in_step = []
-
-        # Structured markers
-        for m in _re.finditer(r"@@JOB_FOUND:\s*(\{[^}]{1,2000}\})", text):
-            try:
-                job = _json.loads(m.group(1))
-                url = job.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    new_in_step.append(job)
-            except _json.JSONDecodeError:
-                pass
-
-        # LinkedIn job URLs with metadata in surrounding text
-        # (bare URLs without @@JOB_FOUND are skipped — no useful metadata)
-
-        # Bare job IDs: "4356842209: Associate Data Analyst - PitchBook - Easy Apply"
-        for m in _re.finditer(r"(\d{10,})\s*:\s*(.+?)(?:\s*-\s*(.+?))?(?:\s*-\s*(Easy Apply|NO Easy Apply))?(?:\n|$)", text):
-            url = f"https://www.linkedin.com/jobs/view/{m.group(1)}/"
-            if url not in seen_urls:
-                seen_urls.add(url)
-                new_in_step.append({
-                    "url": url,
-                    "title": (m.group(2) or "").strip(),
-                    "company": (m.group(3) or "").strip(),
-                    "location": "",
-                    "easy_apply": m.group(4) == "Easy Apply" if m.group(4) else None,
-                })
-
-        if new_in_step:
-            # Save to disk immediately
-            now = datetime.now(timezone.utc).isoformat()
-            jobs = read_jobs()
-            for job in new_in_step:
-                url = job.get("url") or job.pop("url", "")
-                jobs[url] = {
-                    **job, "url": url,
-                    "search_title": title, "status": "pending",
-                    "collected_at": now, "applied_at": None, "error": None,
-                }
-            write_jobs(jobs)
-            found.extend(new_in_step)
-            print(f"    💾 Saved {len(new_in_step)} new jobs (total this title: {len(found)})")
+    async def _extract_job_from_step(text: str, live_url: str):
+        """Persist only metadata tied to this exact live LinkedIn listing."""
+        if max_jobs > 0 and len(found) >= max_jobs:
+            return
+        marker_job = _job_from_step(text, live_url)
+        if not marker_job:
+            return
+        job, read_error = await read_linkedin_job_listing(browser)
+        if not job or job_identity(job["url"]) != job_identity(marker_job["url"]):
+            print(f"    ⚠️  Skipped unverified job marker: {read_error or 'live job ID changed'}")
+            return
+        url = job["url"]
+        key = job_identity(url)
+        if key in seen_jobs:
+            return
+        seen_jobs.add(key)
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            **job,
+            "search_title": title, "status": "pending",
+            "collected_at": now, "applied_at": None, "error": None,
+        }
+        if not add_job_if_new(url, record):
+            return
+        found.append(job)
+        if on_job_saved:
+            on_job_saved(1, len(found))
+        print(f"    💾 Saved 1 new job (total this title: {len(found)})")
 
     _agent_ref = {"agent": None}
 
-    def on_step(browser_state, agent_output, step_num):
+    async def on_step(browser_state, agent_output, step_num):
         _agent_on_step(browser_state, agent_output, step_num)
         if not agent_output:
             return
-        memory = getattr(agent_output, "memory", "") or ""
-        _extract_jobs_from_text(memory)
+        marker_text = getattr(agent_output, "memory", "") or ""
+        if "@@JOB_FOUND" not in marker_text:
+            for action in getattr(agent_output, "action", []) or []:
+                action_text = getattr(action, "text", "") or ""
+                if "@@JOB_FOUND" in action_text:
+                    marker_text = action_text
+                    break
+        await _extract_job_from_step(
+            marker_text,
+            getattr(browser_state, "url", "") if browser_state else "",
+        )
         # Force stop when max_jobs reached
         if max_jobs > 0 and len(found) >= max_jobs and _agent_ref["agent"]:
             print(f"    ✅ Reached {max_jobs} jobs — stopping agent")
@@ -189,6 +213,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
 
             f"IMPORTANT RULES:\n"
             f"- Output ONE @@JOB_FOUND marker per step in your MEMORY field. Do NOT batch them.\n"
+            f"- Emit the marker only after the selected job panel has finished loading. Read title, company, location, and currentJobId from that same selected panel/page; never combine the previous job's text with the current URL.\n"
             f"- Keep MEMORY under 800 characters. Never repeat a running list of job IDs, URLs, prior jobs, or a self-reported total. Python deduplicates URLs and counts confirmed saves for you.\n"
             f"- After the marker, write only a short next-step note. Do not narrate progress or restate prior work.\n"
             f"- Do NOT use extract, find_elements, or evaluate to get URLs. Just click and read the URL bar.\n"
@@ -221,30 +246,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
     agent.tools.set_coordinate_clicking(True)
     _agent_ref["agent"] = agent
 
-    result = await agent.run()
-
-    # Extract jobs from the full history (agent may put @@JOB_FOUND in memory or done text)
-    if result and result.history:
-        for item in result.history:
-            if not item.model_output:
-                continue
-            # Check memory field
-            memory = getattr(item.model_output, "memory", "") or ""
-            if "@@JOB_FOUND" in memory:
-                _extract_jobs_from_text(memory)
-            # Check done action text (handles both object and dict formats)
-            actions = getattr(item.model_output, "action", []) or []
-            for act in actions:
-                # Object attribute
-                text = getattr(act, "text", "") or ""
-                if not text:
-                    # Dict format: {'done': {'text': '...'}}
-                    if isinstance(act, dict):
-                        done_data = act.get("done", {})
-                        if isinstance(done_data, dict):
-                            text = done_data.get("text", "") or ""
-                if "@@JOB_FOUND" in text:
-                    _extract_jobs_from_text(text)
+    await agent.run()
 
     return found
 

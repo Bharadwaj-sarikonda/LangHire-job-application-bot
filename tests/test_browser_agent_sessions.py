@@ -167,16 +167,28 @@ def test_apply_agent_requires_exact_secret_tokens_and_email_verification():
 
 def test_linkedin_collector_preserves_filters_when_advancing_pages():
     source = (ROOT / "cli/collect_jobs.py").read_text(encoding="utf-8")
-    assert "visible Next button or the next numbered page" in source
-    assert "Keep the same job title and all current search filters" in source
+    assert '_NEXT_LINKEDIN_PAGE_JS' in source
+    assert 'next.click()' in source
+    assert 'currentJobId' not in source
 
 
-def test_linkedin_collector_keeps_model_memory_compact_and_requires_done_action():
+def test_linkedin_collector_hands_results_to_deterministic_dom_collection():
     source = (ROOT / "cli/collect_jobs.py").read_text(encoding="utf-8")
-    assert "Keep MEMORY under 800 characters" in source
-    assert "Never repeat a running list of job IDs" in source
-    assert "Python deduplicates URLs and counts confirmed saves" in source
-    assert "never return a text-only completion or an empty action" in source
+    assert "Do not click or open any job card" in source
+    assert "Do not read the right-side job panel" in source
+    assert "_collect_linkedin_result_cards" in source
+    assert "componentkey^='job-card-component-ref-'" in source
+    assert "keep_alive=True" in source
+    assert "directly_open_url=False" in source
+    assert "await browser.kill()" in source
+    assert source.count("await browser.must_get_current_page()") == 1
+
+
+def test_linkedin_collection_limit_is_shared_across_role_iteration():
+    source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+    assert "new_jobs_this_run = 0" in source
+    assert "remaining = max_jobs - new_jobs_this_run" in source
+    assert "new_jobs_this_run += len(found)" in source
 
 
 def test_apply_agent_uses_native_reliability_features():

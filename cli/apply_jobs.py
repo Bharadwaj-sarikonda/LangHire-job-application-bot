@@ -37,6 +37,7 @@ try:
     from memory.metrics import MetricsStore
     from core.agent_logger import on_step as _agent_on_step, on_done as _agent_on_done, log_run_start as _agent_log_start
     from core.browser_profiles import create_worker_profiles as _create_worker_profiles, remove_worker_profiles, remove_stale_worker_profiles as _remove_stale_worker_profiles
+    from core.browser_use_playwright import install_playwright_actions, verify_submission
 except ImportError:
     import backend.core.shared_config as config
     from backend.core.shared_config import (
@@ -52,6 +53,7 @@ except ImportError:
     from backend.memory.metrics import MetricsStore
     from backend.core.agent_logger import on_step as _agent_on_step, on_done as _agent_on_done, log_run_start as _agent_log_start
     from backend.core.browser_profiles import create_worker_profiles as _create_worker_profiles, remove_worker_profiles, remove_stale_worker_profiles as _remove_stale_worker_profiles
+    from backend.core.browser_use_playwright import install_playwright_actions, verify_submission
 
 # Lock for thread-safe QA file writes
 _qa_lock = asyncio.Lock()
@@ -193,6 +195,52 @@ async def save_new_qa(new_questions: dict, source_domain: str = ""):
             save_json(QA_FILE, qa)
 
 
+def _authoritative_profile_values(profile: dict, application_email: str) -> dict[str, str]:
+    """Flatten profile facts that browser actions must never let the model replace."""
+    address = profile.get("address", {}) or {}
+    education = profile.get("education", {}) or {}
+    salary = profile.get("salary_expectation", {}) or {}
+    city, state = str(address.get("city", "")).strip(), str(address.get("state", "")).strip()
+    authorization = str(profile.get("work_authorization", "")).strip()
+    unauthorized = any(word in authorization.lower() for word in ("not authorized", "unauthorized", "no authorization"))
+    values = {
+        "full_name": profile.get("name", ""),
+        "first_name": profile.get("first_name", ""),
+        "middle_name": profile.get("middle_name", ""),
+        "last_name": profile.get("last_name", ""),
+        "email": application_email,
+        "phone": profile.get("phone", ""),
+        "phone_country_code": profile.get("phone_country_code", ""),
+        "address_street": address.get("street", ""),
+        "address_city": city,
+        "address_state": state,
+        "address_zip": address.get("zip", ""),
+        "address_country": address.get("country", ""),
+        "current_location": ", ".join(part for part in (city, state) if part),
+        "work_authorization": authorization,
+        "work_authorized": "No" if unauthorized else "Yes" if authorization else "",
+        "sponsorship": "Yes" if profile.get("visa_sponsorship_needed") else "No",
+        "relocation": "Yes" if profile.get("willing_to_relocate") else "No",
+        "current_role": profile.get("current_role", ""),
+        "education_school": education.get("school", ""),
+        "education_degree": education.get("degree", ""),
+        "education_graduation": education.get("graduation", ""),
+        "salary_min": salary.get("min", ""),
+        "salary_max": salary.get("max", ""),
+        "years_experience": profile.get("years_of_experience", ""),
+        "years_ml": profile.get("years_of_machine_learning_experience", ""),
+        "years_genai": profile.get("years_of_generative_ai_experience", ""),
+        "years_python": profile.get("years_of_python_experience", ""),
+        "years_aws": profile.get("years_of_aws_experience", ""),
+        "years_azure": profile.get("years_of_azure_experience", ""),
+    }
+    return {
+        key: str(value).strip()
+        for key, value in values.items()
+        if value is not None and str(value).strip() and value != 0
+    }
+
+
 async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[str], easy_apply: bool, worker_id: int, resume_path_override: str | None = None, browser_profile_dir: Path | None = None) -> str:
     """Apply to a single job. Returns final status."""
     url = job["url"]
@@ -210,10 +258,6 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         print(f"  🚫 [W{worker_id}] Blocked: {title} at {company}")
         return "blocked"
 
-    if not claim_job(url):
-        print(f"  ⏭️  [W{worker_id}] Skipped (already claimed): {title} at {company}")
-        return "skipped"
-
     # Always refresh credentials before each job to avoid mid-run expiry
     refresh_credentials()
 
@@ -224,13 +268,13 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR),
         chromium_sandbox=(sys.platform != "linux"),
         cross_origin_iframes=True,
+        keep_alive=True,
     )
     mem_store = get_memory_store()
     # Count memories injected for metrics tracking
     domain = mem_store.extract_domain(url)
     memories_before = mem_store.get_domain_memories(url, limit=50)
     memories_injected_count = len(memories_before) if memories_before else 0
-    memory = build_memory_context(profile, qa, applied_labels, job_url=url)
     run_started_at = datetime.now(timezone.utc)
 
     resume_path = resume_path_override or RESUME_PATH
@@ -251,6 +295,9 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         print(f"  ❌ [W{worker_id}] Resume file not found: {resume_path}")
         return "failed"
     resume_path = str(resume_file.resolve())
+    memory = build_memory_context(
+        profile, qa, applied_labels, job_url=url, resume_path=resume_path
+    )
 
     # Profile email is for application forms; credentials email/password are for ATS login
     agent_sensitive_data = {
@@ -368,25 +415,56 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         register_should_stop_callback=progress_watchdog.should_stop,
     )
     agent.tools.set_coordinate_clicking(True)
+    install_playwright_actions(
+        agent.tools,
+        authoritative_values=_authoritative_profile_values(
+            profile, agent_sensitive_data["email"]
+        ),
+    )
 
     try:
+        if not claim_job(url):
+            print(f"  ⏭️  [W{worker_id}] Skipped (already claimed): {title} at {company}")
+            return "skipped"
+
         result = await agent.run(max_steps=MAX_STEPS)
-
-        # Extract Q&A from history
-        _, new_questions = extract_from_history(result)
-        domain = mem_store.extract_domain(url)
-        await save_new_qa(new_questions, source_domain=domain)
-
-        # Determine success/failure
-        success = result.is_successful()
         errors = [e for e in result.errors() if e]
+        reported_success = result.is_successful() is True
+        success, verification_detail = await verify_submission(browser)
+        if success:
+            await save_job_status(url, "applied")
+            final_status = "applied"
+            print(f"  ✅ [W{worker_id}] Applied: {title} at {company} ({verification_detail})")
+        elif reported_success:
+            final_status = "blocked"
+            await save_job_status(
+                url, "blocked",
+                f"Agent reported submission, but it could not be verified: {verification_detail}",
+            )
+            print(f"  ⚠️  [W{worker_id}] Submission needs review: {title} at {company}")
+        else:
+            final_status = "failed"
+            error_msg = errors[-1] if errors else (result.final_result() or "Agent reported failure")
+            await save_job_status(url, "failed", error_msg[:2000])
+            print(f"  ❌ [W{worker_id}] Failed: {title} at {company} — {error_msg[:100]}")
+
+        # Persisted application state above is authoritative. Learning and
+        # bookkeeping below must never undo a verified submission.
+        try:
+            _, new_questions = extract_from_history(result)
+            await save_new_qa(new_questions, source_domain=domain)
+        except Exception as qa_err:
+            print(f"    ⚠️  [W{worker_id}] Q&A learning failed (non-fatal): {qa_err}")
 
         # ── Memory extraction (self-learning) ─────────────────────────────
-        mem_store = get_memory_store()
         # 1. Marker-based: extract @@LEARNING tags the agent emitted
-        marker_learnings = extract_learnings_from_markers(result)
-        if marker_learnings:
-            store_learnings(mem_store, marker_learnings, url, success)
+        marker_learnings = []
+        try:
+            marker_learnings = extract_learnings_from_markers(result)
+            if marker_learnings:
+                store_learnings(mem_store, marker_learnings, url, success)
+        except Exception as mem_err:
+            print(f"    ⚠️  [W{worker_id}] Marker learning failed (non-fatal): {mem_err}")
         # 2. LLM-based: use the configured LLM to summarise the run into procedural learnings
         llm_learnings = []
         try:
@@ -434,16 +512,12 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         except Exception as metrics_err:
             print(f"    ⚠️  [W{worker_id}] Metrics recording failed (non-fatal): {metrics_err}")
 
-        if success:
-            await save_job_status(url, "applied")
-            print(f"  ✅ [W{worker_id}] Applied: {title} at {company}")
-            return "applied"
-        else:
-            error_msg = errors[-1] if errors else (result.final_result() or "Agent reported failure")
-            await save_job_status(url, "failed", error_msg[:2000])
-            print(f"  ❌ [W{worker_id}] Failed: {title} at {company} — {error_msg[:100]}")
-            return "failed"
+        return final_status
 
+    except asyncio.CancelledError:
+        await save_job_status(url, "pending", "Application cancelled before completion")
+        print(f"  🛑 [W{worker_id}] Cancelled: {title} at {company}")
+        raise
     except Exception as e:
         error_str = str(e)
         if "security token" in error_str.lower() or "expired" in error_str.lower():
@@ -472,18 +546,26 @@ async def worker(name: str, worker_id: int, queue: asyncio.Queue, profile: dict,
         except asyncio.QueueEmpty:
             break
 
-        job_easy_apply = job.get("easy_apply", easy_apply) if job.get("easy_apply") is not None else easy_apply
-        status = await apply_to_job(
-            job, profile, qa, applied_labels, job_easy_apply, worker_id,
-            browser_profile_dir=browser_profile_dir,
-        )
-        stats[status] = stats.get(status, 0) + 1
+        try:
+            job_easy_apply = job.get("easy_apply", easy_apply) if job.get("easy_apply") is not None else easy_apply
+            status = await apply_to_job(
+                job, profile, qa, applied_labels, job_easy_apply, worker_id,
+                browser_profile_dir=browser_profile_dir,
+            )
+            stats[status] = stats.get(status, 0) + 1
 
-        # On retry, put back in queue
-        if status == "retry":
-            queue.put_nowait(job)
-
-        queue.task_done()
+            if status == "retry":
+                retries = int(job.get("_credential_retries", 0))
+                if retries < 1:
+                    job["_credential_retries"] = retries + 1
+                    queue.put_nowait(job)
+                else:
+                    await save_job_status(
+                        job["url"], "failed", "Credentials remained expired after retry"
+                    )
+                    print(f"  ❌ [{name}] Credential retry limit reached")
+        finally:
+            queue.task_done()
 
 
 async def main():

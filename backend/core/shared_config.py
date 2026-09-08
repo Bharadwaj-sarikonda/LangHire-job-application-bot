@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import boto3
 from filelock import FileLock
@@ -116,6 +117,41 @@ def write_jobs(jobs: dict):
         save_json(JOBS_FILE, jobs)
 
 
+def linkedin_job_id(url: str) -> str | None:
+    """Return the stable LinkedIn job ID from a LinkedIn job URL."""
+    try:
+        parsed = urlparse((url or "").strip())
+        host = (parsed.hostname or "").lower()
+        if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+            return None
+        match = re.search(r"/jobs/view/(\d{7,})(?:/|$)", parsed.path, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        values = parse_qs(parsed.query).get("currentJobId", [])
+        return values[0] if values and re.fullmatch(r"\d{7,}", values[0]) else None
+    except Exception:
+        return None
+
+
+def job_identity(url: str) -> str:
+    """Use LinkedIn's stable job ID; preserve exact identity for other URLs."""
+    url = (url or "").strip()
+    job_id = linkedin_job_id(url)
+    return f"linkedin:{job_id}" if job_id else f"url:{url}"
+
+
+def add_job_if_new(url: str, job: dict) -> bool:
+    """Atomically add a job unless the same stable identity is already stored."""
+    identity = job_identity(url)
+    with FileLock(JOBS_LOCK):
+        jobs = load_json(JOBS_FILE, {})
+        if any(job_identity(existing_url) == identity for existing_url in jobs):
+            return False
+        jobs[url] = job
+        save_json(JOBS_FILE, jobs)
+        return True
+
+
 def update_job(url: str, **fields):
     """Atomically update a single job entry."""
     with FileLock(JOBS_LOCK):
@@ -134,8 +170,25 @@ def claim_job(url: str) -> bool:
     with _claim_lock:
         with FileLock(JOBS_LOCK):
             jobs = load_json(JOBS_FILE, {})
-            if url in jobs and jobs[url].get("status") == "pending":
+            identity = job_identity(url)
+            same_job_active = any(
+                existing_url != url
+                and job_identity(existing_url) == identity
+                and existing_job.get("status") in ("in_progress", "applied")
+                for existing_url, existing_job in jobs.items()
+            )
+            if not same_job_active and url in jobs and jobs[url].get("status") == "pending":
                 jobs[url]["status"] = "in_progress"
+                for existing_url, existing_job in jobs.items():
+                    if (
+                        existing_url != url
+                        and job_identity(existing_url) == identity
+                        and existing_job.get("status") in ("pending", "failed")
+                    ):
+                        existing_job.update(
+                            status="blocked",
+                            error="Duplicate LinkedIn job ID; another URL variant was claimed",
+                        )
                 save_json(JOBS_FILE, jobs)
                 return True
             return False
@@ -166,8 +219,12 @@ async def credential_refresh_loop(interval_minutes: int = 14):
 
 def get_llm(session_id: str | None = None) -> ChatAWSBedrock:
     """Create a fresh LLM client with current credentials."""
+    try:
+        from core.llm_factory import debug_llm_calls
+    except ImportError:
+        from backend.core.llm_factory import debug_llm_calls
     session = boto3.Session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
-    return ChatAWSBedrock(model=MODEL_ID, session=session)
+    return debug_llm_calls(ChatAWSBedrock(model=MODEL_ID, session=session))
 
 
 def normalize_question(q: str) -> str:
@@ -175,10 +232,15 @@ def normalize_question(q: str) -> str:
 
 
 _PROFILE_CONTROLLED_QUESTION_RE = re.compile(
-    r"\b(?:gender|sex|race|ethnic(?:ity)?|hispanic|latino|disabilit(?:y|ies)|"
+    r"\b(?:full name|legal name|first name|last name|email|phone|telephone|"
+    r"street address|mailing address|home address|current (?:city|state|location)|"
+    r"city|zip|postal code|gender|sex|race|ethnic(?:ity)?|hispanic|latino|disabilit(?:y|ies)|"
     r"veteran|marital|date of birth|birth ?date|country of birth|nationality|"
     r"citizenship|authorized to work|work authorization|visa sponsorship|"
-    r"sponsorship|over 18|years old|age)\b",
+    r"sponsorship|willing to relocate|relocation|salary expectation|expected salary|"
+    r"notice period|gpa|school|university|college|degree|education|graduat(?:ion|ed)|"
+    r"current employer|current company|current job title|employment date|start date|end date|"
+    r"certification|how many years|years? of .+ experience|over 18|years old|age)\b",
     re.IGNORECASE,
 )
 
@@ -188,16 +250,35 @@ def is_profile_controlled_question(question: str) -> bool:
     return bool(_PROFILE_CONTROLLED_QUESTION_RE.search(question or ""))
 
 
+def _resume_text(resume_path: str | None = None) -> str:
+    """Read the resume that will actually be submitted, with the legacy markdown fallback."""
+    path = Path(resume_path or RESUME_PATH).expanduser() if (resume_path or RESUME_PATH) else None
+    if path and path.is_file():
+        if path.suffix.lower() == ".pdf":
+            import fitz
+
+            with fitz.open(path) as document:
+                text = "\n".join(page.get_text() for page in document).strip()
+                if text:
+                    return text
+        else:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    return (BASE_DIR / "resume.md").read_text(encoding="utf-8").strip()
+
+
 def build_memory_context(
     profile: dict,
     qa: dict,
     applied_labels: list[str] | None = None,
     job_url: str | None = None,
+    resume_path: str | None = None,
 ) -> str:
     """Build the system message context with candidate profile, Q&A bank, and per-website learnings."""
     parts = []
 
-    resume_context = (BASE_DIR / "resume.md").read_text(encoding="utf-8").strip()
+    resume_context = _resume_text(resume_path)
 
     parts.append(
         f"""FULL CANDIDATE RESUME:
@@ -228,7 +309,8 @@ def build_memory_context(
 
         f"Email: {profile.get('email', '')}, Phone: {profile.get('phone_country_code', '')}{profile.get('phone', '')}",
 
-        f"Location: {profile.get('address', {}).get('city', '')}, "
+        f"Street Address: {profile.get('address', {}).get('street', '')}",
+        f"Current/Home Location: {profile.get('address', {}).get('city', '')}, "
         f"{profile.get('address', {}).get('state', '')} "
         f"{profile.get('address', {}).get('zip', '')} "
         f"{profile.get('address', {}).get('country', '')}".strip(),
@@ -239,12 +321,18 @@ def build_memory_context(
         f"Willing to Relocate: {profile.get('willing_to_relocate', False)}, "
         f"Preferred Work Mode: {profile.get('preferred_work_mode', '')}",
 
-        f"Years of Experience: {profile.get('years_of_experience', 0)}",
-        f"Years of Machine Learning Experience: {profile.get('years_of_machine_learning_experience', 0)}",
-        f"Years of Generative AI Experience: {profile.get('years_of_generative_ai_experience', 0)}",
-        f"Years of Python Experience: {profile.get('years_of_python_experience', 0)}",
-        f"Years of AWS Experience: {profile.get('years_of_aws_experience', 0)}",
-        f"Years of Azure Experience: {profile.get('years_of_azure_experience', 0)}",
+        *(
+            f"{label}: {value}"
+            for label, value in (
+                ("Years of Experience", profile.get("years_of_experience")),
+                ("Years of Machine Learning Experience", profile.get("years_of_machine_learning_experience")),
+                ("Years of Generative AI Experience", profile.get("years_of_generative_ai_experience")),
+                ("Years of Python Experience", profile.get("years_of_python_experience")),
+                ("Years of AWS Experience", profile.get("years_of_aws_experience")),
+                ("Years of Azure Experience", profile.get("years_of_azure_experience")),
+            )
+            if value not in (None, "", 0)
+        ),
 
         f"Education: "
         f"{profile.get('education', {}).get('degree', '')} from "
@@ -328,22 +416,25 @@ def build_memory_context(
 
     parts.append("\n".join(profile_lines))
     parts.append(
-    "PROFILE SOURCE-OF-TRUTH INSTRUCTIONS:\n"
-    "For factual personal, demographic, education, work authorization, "
-    "contact, and years-of-experience questions, use the values in "
-    "CANDIDATE PROFILE as the source of truth.\n"
-    "Do not infer or override these values from the resume when an explicit "
-    "profile value is provided.\n"
-    "For demographic questions such as race, ethnicity, gender, Hispanic or "
-    "Latino status, disability status, veteran status, marital status, and "
-    "country of birth, use the saved profile value when available.\n"
-    "Do not choose 'Prefer not to disclose', 'Decline to self-identify', or "
-    "similar options when an explicit profile value is available.\n"
-    "Never use a learned or pre-filled Q&A answer for these profile-controlled "
-    "questions. Before selecting a demographic or work-authorization option, "
-    "compare its visible text with the candidate profile and select only the "
-    "matching value. If no explicit profile value exists, do not guess."
-)
+        "ANSWERING POLICY — LOCK KNOWN FACTS; REASON FROM SUPPORTED EXPERIENCE; NEVER INVENT:\n"
+        "First classify each question as (A) strict factual/personal or (B) qualification/experience.\n"
+        "A: For names, contact/address/current location, authorization/sponsorship/relocation, salary, "
+        "employers/titles, education/dates/certifications, and every exact number, use Profile > saved Q&A > Resume. "
+        "An explicit Profile value is locked: never replace, reinterpret, or contradict it. Job or office location "
+        "never changes the candidate's home address. Current, home, residential, and mailing address fields must use "
+        "the CANDIDATE PROFILE address directly; never infer them from resume education, school, employer, project, or "
+        "job locations. Interpret authorization and sponsorship wording precisely. "
+        "Equivalent formatting and dropdown wording are allowed when meaning is unchanged.\n"
+        "B: For qualification questions, reason semantically from Profile + saved Q&A + Resume. Do not require literal "
+        "wording: PostgreSQL supports database and relational-database experience; Azure Blob Storage supports cloud-storage "
+        "experience; React/Next.js supports frontend experience; REST APIs/tool calling supports API development/integration. "
+        "Answer Yes when the relationship is genuinely supported, but PostgreSQL does not prove 5 years, Azure Blob does not "
+        "prove AWS, React does not prove Angular, and absent Kubernetes evidence must not become Yes.\n"
+        "Free text may summarize, paraphrase, connect transferable experience, and tailor wording, but may not create companies, "
+        "projects, technologies, duties, achievements, metrics, certifications, degrees, dates, or durations. Exact numbers require "
+        "direct evidence or deterministic calculation from supported dates. Before treating a missing answer as a blocker, check "
+        "semantic support, deterministic calculation, saved Q&A, and equivalent options."
+    )
 
     parts.append(
         "SCREENING-QUESTION ANSWERING INSTRUCTIONS:\n"
@@ -351,7 +442,7 @@ def build_memory_context(
         "Use the most relevant evidence from the resume, CANDIDATE PROFILE, and saved Q&A: name the specific technologies, services, responsibilities, outcomes, and scope that are actually supported by those sources. "
         "For example, when asked about AWS experience, answer whether the candidate has it and mention only the AWS services and work described in the candidate materials. "
         "Present supported experience clearly and confidently, but never invent, exaggerate, or imply hands-on experience with technologies, projects, metrics, or responsibilities that are not supported. "
-        "Use a saved Q&A answer when it directly answers the question; otherwise synthesize the best accurate answer from the candidate materials."
+        "Use a saved Q&A answer when it directly answers the question and does not conflict with Profile; otherwise synthesize the best accurate answer from the candidate materials."
     )
 
     # Country-specific instructions for the agent
@@ -388,10 +479,13 @@ def build_memory_context(
         qa_list = "\n".join(
             f'Q: {q}\nA: {a}'
             for q, a in qa_for_prompt.items()
-            if a and not is_profile_controlled_question(q)
+            if a
         )
         if qa_list:
-            parts.append(f"Pre-filled answers for application questions:\n{qa_list}")
+            parts.append(
+                "SAVED Q&A (subordinate to explicit Profile facts; use when Profile is missing or for supported qualifications):\n"
+                + qa_list
+            )
 
     # ── Per-website memory injection ──────────────────────────────────────
     if job_url:

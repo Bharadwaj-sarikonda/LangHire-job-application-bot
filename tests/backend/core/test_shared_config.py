@@ -87,8 +87,12 @@ def test_profile_controlled_questions_are_not_eligible_for_learned_qa(question):
     assert sc.is_profile_controlled_question(question) is True
 
 
-def test_regular_screening_question_can_use_learned_qa():
-    assert sc.is_profile_controlled_question("How many years of Python experience do you have?") is False
+def test_exact_experience_number_is_not_eligible_for_learned_qa():
+    assert sc.is_profile_controlled_question("How many years of Python experience do you have?") is True
+
+
+def test_qualification_question_can_use_learned_qa():
+    assert sc.is_profile_controlled_question("Do you have relational database experience?") is False
 
 
 # ── load_json / save_json ────────────────────────────────────────────────────
@@ -165,6 +169,44 @@ def test_claim_job_unknown(jobs_paths):
     """Claiming an unknown URL returns False."""
     sc.write_jobs({})
     assert sc.claim_job("nope") is False
+
+
+def test_linkedin_job_identity_ignores_url_variants():
+    canonical = "https://www.linkedin.com/jobs/view/4463624853/"
+    search = "https://www.linkedin.com/jobs/search/?currentJobId=4463624853&keywords=python"
+    assert sc.job_identity(canonical) == sc.job_identity(search) == "linkedin:4463624853"
+
+
+def test_add_job_if_new_rejects_same_linkedin_id(jobs_paths):
+    canonical = "https://www.linkedin.com/jobs/view/4463624853/"
+    search = "https://www.linkedin.com/jobs/search/?currentJobId=4463624853"
+    assert sc.add_job_if_new(canonical, {"url": canonical, "status": "pending"}) is True
+    assert sc.add_job_if_new(search, {"url": search, "status": "pending"}) is False
+    assert list(sc.read_jobs()) == [canonical]
+
+
+def test_claim_job_rejects_linkedin_variant_when_same_job_is_applied(jobs_paths):
+    canonical = "https://www.linkedin.com/jobs/view/4463624853/"
+    search = "https://www.linkedin.com/jobs/search/?currentJobId=4463624853"
+    sc.write_jobs({
+        canonical: {"url": canonical, "status": "applied"},
+        search: {"url": search, "status": "pending"},
+    })
+    assert sc.claim_job(search) is False
+    assert sc.read_jobs()[search]["status"] == "pending"
+
+
+def test_claim_job_blocks_legacy_pending_linkedin_variant(jobs_paths):
+    canonical = "https://www.linkedin.com/jobs/view/4463624853/"
+    search = "https://www.linkedin.com/jobs/search/?currentJobId=4463624853"
+    sc.write_jobs({
+        canonical: {"url": canonical, "status": "pending"},
+        search: {"url": search, "status": "pending"},
+    })
+    assert sc.claim_job(canonical) is True
+    jobs = sc.read_jobs()
+    assert jobs[canonical]["status"] == "in_progress"
+    assert jobs[search]["status"] == "blocked"
 
 
 # ── refresh_credentials ──────────────────────────────────────────────────────
@@ -380,6 +422,9 @@ def test_build_memory_context_basic(base_profile, no_op_store):
     assert "NATIONALITY:" in ctx
     assert "COVER LETTER:" in ctx
     assert "TRACKING INSTRUCTIONS:" in ctx
+    assert "Profile > saved Q&A > Resume" in ctx
+    assert "PostgreSQL supports database and relational-database experience" in ctx
+    assert "absent Kubernetes evidence must not become Yes" in ctx
 
 
 def test_build_memory_context_includes_qa(base_profile, no_op_store):
@@ -388,14 +433,31 @@ def test_build_memory_context_includes_qa(base_profile, no_op_store):
     assert "Q: Q1\nA: A1" in ctx
 
 
-def test_build_memory_context_excludes_learned_demographic_answers(base_profile, no_op_store):
+def test_build_memory_context_forbids_inferring_home_address_from_resume_locations(base_profile, no_op_store):
+    ctx = sc.build_memory_context(base_profile, qa={})
+
+    assert "mailing address fields must use the CANDIDATE PROFILE address directly" in ctx
+    assert "never infer them from resume education, school, employer, project, or job locations" in ctx
+
+
+def test_build_memory_context_marks_saved_facts_as_subordinate_to_profile(base_profile, no_op_store):
     ctx = sc.build_memory_context(
         base_profile,
         qa={"What is your gender?": "Female", "What is your favorite language?": "Python"},
     )
-    assert "Q: What is your gender?" not in ctx
+    assert "SAVED Q&A (subordinate to explicit Profile facts" in ctx
+    assert "Q: What is your gender?\nA: Female" in ctx
     assert "Q: What is your favorite language?\nA: Python" in ctx
     assert "blank" not in ctx  # empty answers are filtered out
+
+
+def test_build_memory_context_uses_selected_resume(base_profile, no_op_store, tmp_path):
+    resume = tmp_path / "selected-resume.txt"
+    resume.write_text("PostgreSQL and Azure Blob Storage", encoding="utf-8")
+
+    ctx = sc.build_memory_context(base_profile, qa={}, resume_path=str(resume))
+
+    assert "PostgreSQL and Azure Blob Storage" in ctx
 
 
 def test_build_memory_context_applied_labels(base_profile, no_op_store):
@@ -410,6 +472,14 @@ def test_build_memory_context_no_salary(base_profile, no_op_store):
     base_profile["salary_expectation"]["min"] = 0
     ctx = sc.build_memory_context(base_profile, qa={})
     assert "Salary: Not specified" in ctx
+
+
+def test_build_memory_context_does_not_treat_default_zero_years_as_known(base_profile, no_op_store):
+    base_profile["years_of_experience"] = 0
+
+    ctx = sc.build_memory_context(base_profile, qa={})
+
+    assert "Years of Experience: 0" not in ctx
 
 
 def test_build_memory_context_default_date_format(base_profile, no_op_store):

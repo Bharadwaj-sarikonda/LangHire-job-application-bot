@@ -366,9 +366,6 @@ def build_memory_context(
     if country_instructions:
         parts.append("COUNTRY-SPECIFIC INSTRUCTIONS:\n" + "\n".join(country_instructions))
 
-    if applied_labels:
-        parts.append("Already applied — SKIP:\n" + "\n".join(f"- {j}" for j in applied_labels))
-
     # Try SQLite Q&A first, fall back to passed-in dict
     qa_for_prompt = qa
     try:
@@ -384,14 +381,13 @@ def build_memory_context(
                 qa_for_prompt = db_qa
     except Exception:
         pass
+    qa_list = ""
     if qa_for_prompt:
         qa_list = "\n".join(
             f'Q: {q}\nA: {a}'
-            for q, a in qa_for_prompt.items()
+            for q, a in sorted(qa_for_prompt.items(), key=lambda item: (str(item[0]).casefold(), str(item[1]).casefold()))
             if a
         )
-        if qa_list:
-            parts.append(f"SAVED Q&A (SECOND PRIORITY):\n{qa_list}")
 
     parts.append(
         f"""FULL CANDIDATE RESUME (THIRD PRIORITY):
@@ -400,11 +396,26 @@ def build_memory_context(
         Use the resume as evidence for skills, experience, employment, education, projects, and qualifications when Profile and Saved Q&A do not directly answer the question. Reason from documented evidence without requiring exact wording, but do not invent unsupported experience or factual personal values."""
     )
 
+    if qa_list:
+        parts.append(f"SAVED Q&A (SECOND PRIORITY):\n{qa_list}")
+
+    if applied_labels:
+        labels = sorted((str(j) for j in applied_labels), key=str.casefold)
+        parts.append("Already applied — SKIP:\n" + "\n".join(f"- {j}" for j in labels))
+
     # ── Per-website memory injection ──────────────────────────────────────
     if job_url:
         store = get_memory_store()
         memories = store.get_domain_memories(job_url, limit=20)
         if memories:
+            memories = sorted(
+                memories,
+                key=lambda m: (
+                    str(m.get("category", "")).casefold(),
+                    str(m.get("content", "")).casefold(),
+                    int(m.get("id", 0) or 0),
+                ),
+            )
             domain = store.extract_domain(job_url)
             mem_count = len(memories)
             print(f"    🧠 Injecting {mem_count} memories for {domain}")

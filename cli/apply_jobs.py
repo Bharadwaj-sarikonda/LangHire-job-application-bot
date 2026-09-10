@@ -294,7 +294,6 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         apply_instructions = (
             f"Go to {url} on LinkedIn. Click Apply and follow through to the external application page. "
             f"Use resume at {resume_path}. Auto-fill all fields from candidate profile.\n"
-            f"- For resume/CV uploads, use only the browser's built-in upload_file action to attach the file at {resume_path}.\n\n"
             f"NAVIGATING EXTERNAL SITES:\n"
             f"- The LinkedIn 'Apply' button often opens a company careers page, NOT the application form directly.\n"
             f"- You MUST explore the landing page: look for 'Apply Now', 'Submit Application', or similar buttons.\n"
@@ -325,6 +324,9 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
 
     agent = Agent(
         task=(
+            f"GENERAL APPLICATION RULES:\n"
+            f"- Use the current browser page and available application controls; inspect state after important interactions and verify the intended result before continuing.\n"
+            f"\n"
             f"{apply_instructions}\n\n"
             f"PERSISTENCE & EFFICIENCY:\n"
             f"- FILE UPLOADS: For every Resume/CV upload, use the built-in upload_file action on the file input's current index with this exact absolute path: {resume_path}. This action attaches the file directly to the webpage; it does NOT open a native macOS file chooser. NEVER use click, coordinate clicking, evaluate, or keyboard input on a Choose File/Upload button. If a native file chooser is already visible, do not continue the application underneath it; close it, then inspect the page and use upload_file. After upload_file, inspect the page and continue only when the uploaded filename or a successful upload state is visible.\n"
@@ -353,7 +355,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         ),
         llm=llm,
         max_actions_per_step=5,
-        use_vision="auto",
+        use_vision="true",
         llm_call_timeout=300,  # 5 minutes per step
         max_failures=4,
         max_history_items=6,

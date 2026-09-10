@@ -294,7 +294,6 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         apply_instructions = (
             f"Go to {url} on LinkedIn. Click Apply and follow through to the external application page. "
             f"Use resume at {resume_path}. Auto-fill all fields from candidate profile.\n"
-            f"- For resume/CV uploads, use only the browser's built-in upload_file action to attach the file at {resume_path}.\n\n"
             f"NAVIGATING EXTERNAL SITES:\n"
             f"- The LinkedIn 'Apply' button often opens a company careers page, NOT the application form directly.\n"
             f"- You MUST explore the landing page: look for 'Apply Now', 'Submit Application', or similar buttons.\n"
@@ -325,12 +324,18 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
 
     agent = Agent(
         task=(
+            f"GENERAL APPLICATION RULES:\n"
+            f"- Use the current browser page and available application controls; inspect state after important interactions and verify the intended result before continuing.\n"
+            f"\n"
             f"{apply_instructions}\n\n"
             f"PERSISTENCE & EFFICIENCY:\n"
             f"- FILE UPLOADS: For every Resume/CV upload, use the built-in upload_file action on the file input's current index with this exact absolute path: {resume_path}. This action attaches the file directly to the webpage; it does NOT open a native macOS file chooser. NEVER use click, coordinate clicking, evaluate, or keyboard input on a Choose File/Upload button. If a native file chooser is already visible, do not continue the application underneath it; close it, then inspect the page and use upload_file. After upload_file, inspect the page and continue only when the uploaded filename or a successful upload state is visible.\n"
             f"- At the start of an application, if the form offers an explicit 'Autofill from resume' or equivalent resume-autofill control, use that control first to upload the resume. If no explicit resume-autofill control exists, upload the resume through the ordinary Resume/CV upload control first, since it may autofill fields. After either upload, wait for processing and inspect the refreshed form; fill only fields that remain empty or incorrect.\n"
             f"- Never blindly retry an interaction: if an action does not cause the expected page, field, menu, or button state change, treat that exact method as failed and switch methods immediately.\n"
             f"- After every important field, selection, navigation, or submit action, inspect the next browser state. Request a screenshot only when the state does not clearly identify the target or confirm the result, or before a visual coordinate click. Continue only after confirming the intended value, menu state, validation result, or page transition actually changed.\n"
+            f"- TERMINAL SITE ERRORS: If the current page visibly says the application is closed, no longer accepting applications, filled, unavailable, failed to connect, server error, 404/403/5xx, or otherwise cannot proceed, treat it as a genuine blocker. Do not click the same control again; call done(success=false) immediately with the reason and move on.\n"
+            f"- EFFECTIVE RETRY LIMIT: A successful Browser Use click does not prove the website operation succeeded. If the expected page/form state does not change, re-observe and try at most one distinct appropriate method; allow at most 3 attempts with the same method or 5 attempts for the same logical operation across methods. If it still makes no meaningful progress, call done(success=false) instead of asking for another retry.\n"
+            f"- STAGNATION STOP: After reasonable attempts to fix the cause, if the same logical operation, visible validation error, popup, or blocking state persists for 5 attempts/history steps without meaningful progress, call done(success=false) with the failure reason. Scrolling, waiting, re-inspecting, reopening the same control, retrying with another element index, or incidental DOM changes do not count as progress. Reset this mental retry count only when the error disappears, the intended control reaches the correct state, or the form advances.\n"
             f"- Before clicking any checkbox, radio button, toggle, or selectable option, inspect its current state. If the desired answer is already selected or correct, do not click it again.\n"
             f"- CONSENT CHECKBOXES: If the form says 'check the box', 'accept', 'agree', 'privacy', or 'terms', DO NOT click Submit/Create Account again. Re-inspect the CURRENT page state and target the visible consent checkbox or its text label only. If an attempted checkbox index clicks a button or does not visibly toggle the control, that index is stale: abandon it, inspect again, then use one distinct method (the associated label, a targeted evaluate on that visible checkbox, or a visual coordinate click). Verify a checked state/aria-checked value/checkmark before submitting. After two distinct failed consent-control methods, report the form as blocked instead of looping.\n"
             f"- A missing indexed element is NOT a blocker.\n"
@@ -349,11 +354,11 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             f"For each form question: @@QUESTION: {{\"question\": \"...\", \"answer\": \"...\", \"type\": \"...\"}}"
         ),
         llm=llm,
-        max_actions_per_step=1,
+        max_actions_per_step=5,
         use_vision="true",
         llm_call_timeout=300,  # 5 minutes per step
-        max_failures=10,
-        max_history_items=10,
+        max_failures=4,
+        max_history_items=6,
         message_compaction=True,
         loop_detection_enabled=True,
         loop_detection_window=5,

@@ -406,7 +406,7 @@ class MemoryStore:
         conn = self._get_conn()
         rows = conn.execute(
             f"SELECT * FROM memories {where} "
-            f"ORDER BY confidence DESC, access_count DESC LIMIT ?",
+            f"ORDER BY confidence DESC, access_count DESC, id ASC LIMIT ?",
             params + [limit],
         ).fetchall()
 
@@ -780,7 +780,8 @@ class MemoryStore:
         rows = conn.execute(
             "SELECT question, answer FROM qa_repository "
             "WHERE merged_into_id IS NULL AND answer != '' AND verified = 1 "
-            "AND (source_domain = '' OR source_domain = ?)",
+            "AND (source_domain = '' OR source_domain = ?) "
+            "ORDER BY question COLLATE NOCASE ASC, answer COLLATE NOCASE ASC",
             (source_domain,),
         ).fetchall()
         return {r["question"]: r["answer"] for r in rows}

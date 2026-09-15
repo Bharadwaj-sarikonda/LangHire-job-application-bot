@@ -106,9 +106,9 @@ def create_llm(settings: dict, session_id: str | None = None):
         )
 
     elif provider == "openai_compatible":
-        from browser_use.llm import ChatOpenAI
+        from .openai_compatible_llm import OpenAICompatibleChatOpenAI
         cfg = settings.get("openai_compatible", {})
-        return ChatOpenAI(
+        return OpenAICompatibleChatOpenAI(
             model=cfg.get("model", "default"),
             api_key=cfg.get("api_key") or "not-needed",
             base_url=cfg.get("base_url"),

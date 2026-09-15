@@ -64,8 +64,8 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-5 pt-6 pb-5">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
-            <Briefcase className="w-4 h-4 text-white" />
+          <div className="w-10 h-10 flex items-center justify-center">
+            <span className="text-[30px] leading-none" role="img" aria-label="Teddy bear">🧸</span>
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground tracking-tight">{t("app.title")}</h1>
@@ -113,4 +113,3 @@ export default function Sidebar() {
     </aside>
   );
 }
-

@@ -199,14 +199,6 @@ def build_memory_context(
 
     resume_context = (BASE_DIR / "resume.md").read_text(encoding="utf-8").strip()
 
-    parts.append(
-        f"""FULL CANDIDATE RESUME:
-        {resume_context}
-
-        Use this resume as factual candidate context when answering application questions.
-        Do not invent experience not supported by the resume, candidate profile, or saved Q&A."""
-            )
-
     # Salary formatting (country-aware)
     sal = profile.get('salary_expectation', {})
     sal_currency = sal.get('currency', 'USD') or 'USD'
@@ -228,7 +220,8 @@ def build_memory_context(
 
         f"Email: {profile.get('email', '')}, Phone: {profile.get('phone_country_code', '')}{profile.get('phone', '')}",
 
-        f"Location: {profile.get('address', {}).get('city', '')}, "
+        f"Personal Address: {profile.get('address', {}).get('street', '')}, "
+        f"{profile.get('address', {}).get('city', '')}, "
         f"{profile.get('address', {}).get('state', '')} "
         f"{profile.get('address', {}).get('zip', '')} "
         f"{profile.get('address', {}).get('country', '')}".strip(),
@@ -328,30 +321,37 @@ def build_memory_context(
 
     parts.append("\n".join(profile_lines))
     parts.append(
-    "PROFILE SOURCE-OF-TRUTH INSTRUCTIONS:\n"
-    "For factual personal, demographic, education, work authorization, "
-    "contact, and years-of-experience questions, use the values in "
-    "CANDIDATE PROFILE as the source of truth.\n"
-    "Do not infer or override these values from the resume when an explicit "
-    "profile value is provided.\n"
+    "ANSWER SOURCE PRIORITY — PROFILE > SAVED Q&A > RESUME:\n"
+    "For structured factual fields, first identify which person or entity the field describes. "
+    "Use an explicit CANDIDATE PROFILE value directly for the candidate's name, contact details, "
+    "personal/current/home/mailing address, dates, work authorization, sponsorship, relocation, "
+    "compensation, or any explicitly stored employer/company or school/university fact; saved Q&A "
+    "and the resume must never override it. Treat First Name, Middle "
+    "Name, and Last Name as separate atomic profile values: never split or move words between them, "
+    "and leave an optional middle-name field empty when Middle Name is empty. Never substitute a "
+    "personal name, email, phone, or address for an employer/company or school/university value, or "
+    "vice versa. If the requested factual value is not explicitly available in Profile, use a directly "
+    "matching Saved Q&A; then use Resume evidence. If no reliable factual value exists, do not guess.\n"
+    "Website navigation learnings are procedural guidance only and never override candidate facts or answers.\n"
     "For demographic questions such as race, ethnicity, gender, Hispanic or "
     "Latino status, disability status, veteran status, marital status, and "
     "country of birth, use the saved profile value when available.\n"
     "Do not choose 'Prefer not to disclose', 'Decline to self-identify', or "
     "similar options when an explicit profile value is available.\n"
-    "Never use a learned or pre-filled Q&A answer for these profile-controlled "
+    "Never let a learned or pre-filled Q&A answer override an explicit Profile value for these "
     "questions. Before selecting a demographic or work-authorization option, "
     "compare its visible text with the candidate profile and select only the "
-    "matching value. If no explicit profile value exists, do not guess."
+    "matching value. If no explicit Profile value exists, follow the remaining source priority; "
+    "if no reliable answer exists there, do not guess."
 )
 
     parts.append(
         "SCREENING-QUESTION ANSWERING INSTRUCTIONS:\n"
         "For open-ended application and technical screening questions, write a concise, recruiter-ready answer tailored to the question. "
-        "Use the most relevant evidence from the resume, CANDIDATE PROFILE, and saved Q&A: name the specific technologies, services, responsibilities, outcomes, and scope that are actually supported by those sources. "
+        "For skills, experience, and qualification questions, reason across CANDIDATE PROFILE, saved Q&A, and the resume without requiring an exact keyword match: name the specific technologies, services, responsibilities, outcomes, and scope that are actually supported by those sources. "
         "For example, when asked about AWS experience, answer whether the candidate has it and mention only the AWS services and work described in the candidate materials. "
         "Present supported experience clearly and confidently, but never invent, exaggerate, or imply hands-on experience with technologies, projects, metrics, or responsibilities that are not supported. "
-        "Use a saved Q&A answer when it directly answers the question; otherwise synthesize the best accurate answer from the candidate materials."
+        "Use a saved Q&A answer when it directly answers the question and does not conflict with an authoritative Profile fact; otherwise synthesize the best accurate answer from the documented candidate materials."
     )
 
     # Country-specific instructions for the agent
@@ -365,9 +365,6 @@ def build_memory_context(
         country_instructions.append(f"COVER LETTER: If a cover letter is requested, use:\n{profile['cover_letter']}")
     if country_instructions:
         parts.append("COUNTRY-SPECIFIC INSTRUCTIONS:\n" + "\n".join(country_instructions))
-
-    if applied_labels:
-        parts.append("Already applied — SKIP:\n" + "\n".join(f"- {j}" for j in applied_labels))
 
     # Try SQLite Q&A first, fall back to passed-in dict
     qa_for_prompt = qa
@@ -384,20 +381,41 @@ def build_memory_context(
                 qa_for_prompt = db_qa
     except Exception:
         pass
+    qa_list = ""
     if qa_for_prompt:
         qa_list = "\n".join(
             f'Q: {q}\nA: {a}'
-            for q, a in qa_for_prompt.items()
-            if a and not is_profile_controlled_question(q)
+            for q, a in sorted(qa_for_prompt.items(), key=lambda item: (str(item[0]).casefold(), str(item[1]).casefold()))
+            if a
         )
-        if qa_list:
-            parts.append(f"Pre-filled answers for application questions:\n{qa_list}")
+
+    parts.append(
+        f"""FULL CANDIDATE RESUME (THIRD PRIORITY):
+        {resume_context}
+
+        Use the resume as evidence for skills, experience, employment, education, projects, and qualifications when Profile and Saved Q&A do not directly answer the question. Reason from documented evidence without requiring exact wording, but do not invent unsupported experience or factual personal values."""
+    )
+
+    if qa_list:
+        parts.append(f"SAVED Q&A (SECOND PRIORITY):\n{qa_list}")
+
+    if applied_labels:
+        labels = sorted((str(j) for j in applied_labels), key=str.casefold)
+        parts.append("Already applied — SKIP:\n" + "\n".join(f"- {j}" for j in labels))
 
     # ── Per-website memory injection ──────────────────────────────────────
     if job_url:
         store = get_memory_store()
         memories = store.get_domain_memories(job_url, limit=20)
         if memories:
+            memories = sorted(
+                memories,
+                key=lambda m: (
+                    str(m.get("category", "")).casefold(),
+                    str(m.get("content", "")).casefold(),
+                    int(m.get("id", 0) or 0),
+                ),
+            )
             domain = store.extract_domain(job_url)
             mem_count = len(memories)
             print(f"    🧠 Injecting {mem_count} memories for {domain}")

@@ -188,6 +188,33 @@ def is_profile_controlled_question(question: str) -> bool:
     return bool(_PROFILE_CONTROLLED_QUESTION_RE.search(question or ""))
 
 
+# Automatically learned Q&A should contain reusable screening answers, not
+# every field encountered in an application form.
+_NON_REUSABLE_QUESTION_RE = re.compile(
+    r"\b(?:first|last|full)\s+and\s+last\s+name\b|\b(?:first|last)\s+name\b|"
+    r"\b(?:initials?|signature|sign here|email address|phone number|street address|"
+    r"city|state|zip|postal code|country|linkedin profile|portfolio url)\b|"
+    r"\b(?:gender|sex|race|ethnic(?:ity)?|hispanic|latino|disabilit(?:y|ies)|"
+    r"veteran|marital|date of birth|birth ?date|sexual orientation|transgender)\b|"
+    r"\b(?:reference|reason for leaving|additional comments?|how did you hear|"
+    r"consent|agree|confirmation|terms|privacy policy)\b",
+    re.IGNORECASE,
+)
+
+
+def is_reusable_qa_question(question: str, answer: str = "") -> bool:
+    """Return whether an extracted form field belongs in reusable Q&A memory."""
+    question = (question or "").strip()
+    answer = (answer or "").strip()
+    if not question or not answer:
+        return False
+    if question in {"...", "?"} or "@@QUESTION" in question:
+        return False
+    if is_profile_controlled_question(question):
+        return False
+    return not _NON_REUSABLE_QUESTION_RE.search(question)
+
+
 def build_memory_context(
     profile: dict,
     qa: dict,
@@ -381,6 +408,13 @@ def build_memory_context(
                 qa_for_prompt = db_qa
     except Exception:
         pass
+    # Never inject profile-controlled or non-reusable legacy entries into a
+    # new application, even when they were saved before the stricter ingest
+    # filter was introduced.
+    qa_for_prompt = {
+        q: a for q, a in qa_for_prompt.items()
+        if is_reusable_qa_question(str(q), str(a))
+    }
     qa_list = ""
     if qa_for_prompt:
         qa_list = "\n".join(

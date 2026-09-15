@@ -75,6 +75,21 @@ def test_normalize_question(raw, expected):
 
 
 @pytest.mark.parametrize(
+    "question, answer, expected",
+    [
+        ("How many years of Python experience do you have?", "5", True),
+        ("What is your gender?", "Male", False),
+        ("Initials", "SB", False),
+        ("Reason for leaving your last role", "Career growth", False),
+        ("What is your experience with RAG?", "4 years", True),
+        ("What is your experience with RAG?", "", False),
+    ],
+)
+def test_is_reusable_qa_question_filters_non_screening_fields(question, answer, expected):
+    assert sc.is_reusable_qa_question(question, answer) is expected
+
+
+@pytest.mark.parametrize(
     "question",
     [
         "What is your gender?",

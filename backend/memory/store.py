@@ -733,8 +733,15 @@ class MemoryStore:
     def qa_merge(self, source_id: int, target_id: int) -> bool:
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
-        source = conn.execute("SELECT times_seen FROM qa_repository WHERE id = ?", (source_id,)).fetchone()
-        if not source:
+        source = conn.execute(
+            "SELECT times_seen FROM qa_repository WHERE id = ? AND merged_into_id IS NULL",
+            (source_id,),
+        ).fetchone()
+        target = conn.execute(
+            "SELECT id FROM qa_repository WHERE id = ? AND merged_into_id IS NULL",
+            (target_id,),
+        ).fetchone()
+        if not source or not target or source_id == target_id:
             return False
         conn.execute("UPDATE qa_repository SET merged_into_id = ?, updated_at = ? WHERE id = ?", (target_id, now, source_id))
         conn.execute("UPDATE qa_repository SET times_seen = times_seen + ?, updated_at = ? WHERE id = ?", (source["times_seen"], now, target_id))

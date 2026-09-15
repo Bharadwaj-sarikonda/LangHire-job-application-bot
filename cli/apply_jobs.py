@@ -74,7 +74,7 @@ try:
         AWS_PROFILE, AWS_REGION, MODEL_ID,
         load_json, save_json, refresh_credentials, credential_refresh_loop,
         build_memory_context, extract_from_history, normalize_question,
-        is_profile_controlled_question,
+        is_reusable_qa_question,
         read_jobs, claim_job, update_job, get_memory_store,
     )
     from memory import extract_learnings_from_markers, extract_learnings_via_llm, store_learnings
@@ -89,7 +89,7 @@ except ImportError:
         AWS_PROFILE, AWS_REGION, MODEL_ID,
         load_json, save_json, refresh_credentials, credential_refresh_loop,
         build_memory_context, extract_from_history, normalize_question,
-        is_profile_controlled_question,
+        is_reusable_qa_question,
         read_jobs, claim_job, update_job, get_memory_store,
     )
     from backend.memory import extract_learnings_from_markers, extract_learnings_via_llm, store_learnings
@@ -99,6 +99,7 @@ except ImportError:
 
 # Lock for thread-safe QA file writes
 _qa_lock = asyncio.Lock()
+QA_AUTO_MAX_ACTIVE = 150
 
 
 class _ProgressWatchdog:
@@ -224,14 +225,22 @@ async def save_new_qa(new_questions: dict, source_domain: str = ""):
     async with _qa_lock:
         store = get_memory_store()
         if store:
+            remaining = max(0, QA_AUTO_MAX_ACTIVE - store.qa_stats()["total"])
             for q, a in new_questions.items():
-                if not is_profile_controlled_question(q):
-                    store.qa_add(question=q, answer=a or "", source_domain=source_domain)
+                if remaining <= 0:
+                    break
+                if is_reusable_qa_question(q, a):
+                    before = store.qa_stats()["total"]
+                    store.qa_add(question=q, answer=a, source_domain=source_domain)
+                    if store.qa_stats()["total"] > before:
+                        remaining -= 1
         else:
             qa = load_json(QA_FILE, {})
             existing_norms = {normalize_question(k) for k in qa}
             for q, a in new_questions.items():
-                if not is_profile_controlled_question(q) and normalize_question(q) not in existing_norms:
+                if len(qa) >= QA_AUTO_MAX_ACTIVE or not is_reusable_qa_question(q, a):
+                    continue
+                if normalize_question(q) not in existing_norms:
                     qa[q] = a
                     existing_norms.add(normalize_question(q))
             save_json(QA_FILE, qa)

@@ -22,6 +22,50 @@ if not getattr(sys, 'frozen', False):
 
 from browser_use import Agent, BrowserSession
 
+
+def patch_llm_for_minimax(llm):
+    """Apply MiniMax request compatibility settings to a Browser Use LLM.
+
+    Browser Use 0.13.x does not expose the older ``_agenerate`` hook used by
+    some examples, so the OpenAI-compatible adapter consumes ``model_kwargs``
+    and normalizes image blocks at serialization time instead.
+    """
+    model_name = getattr(llm, "model_name", getattr(llm, "model", ""))
+    if "minimax" not in str(model_name).lower():
+        return llm
+
+    # MiniMax's OpenAI-compatible endpoint does not consistently implement
+    # response_format=json_schema.  The adapter embeds the schema in the
+    # system prompt and validates the returned JSON locally instead.
+    llm.add_schema_to_system_prompt = True
+    llm.dont_force_structured_output = True
+
+    current_kwargs = getattr(llm, "model_kwargs", {}) or {}
+    new_extra_body = dict(current_kwargs.get("extra_body", {}) or {})
+    # Keep reasoning enabled, but split it from the visible action JSON.
+    new_extra_body["thinking"] = {"type": "adaptive"}
+    new_extra_body["reasoning_split"] = True
+    llm.model_kwargs = {**current_kwargs, "extra_body": new_extra_body}
+
+    # Older browser-use versions had _agenerate; retain compatibility for
+    # those versions without breaking the installed 0.13.x API.
+    original_agenerate = getattr(llm.__class__, "_agenerate", None)
+    if original_agenerate is not None and not hasattr(llm.__class__, "_minimax_patched"):
+        async def patched_agenerate(self, messages, *args, **kwargs):
+            for msg in messages:
+                if hasattr(msg, "content") and isinstance(msg.content, list):
+                    for block in msg.content:
+                        if isinstance(block, dict) and block.get("type") == "image_url":
+                            image_data = block.get("image_url", {})
+                            if isinstance(image_data, dict) and image_data.get("detail") == "auto":
+                                image_data["detail"] = "high"
+            return await original_agenerate(self, messages, *args, **kwargs)
+
+        llm.__class__._agenerate = patched_agenerate
+        llm.__class__._minimax_patched = True
+
+    return llm
+
 try:
     import core.shared_config as config
     from core.shared_config import (
@@ -105,9 +149,9 @@ async def verify_batch_logins() -> bool:
                 "Do not apply to jobs, change account settings, read/send email, or attempt to close tabs. "
                 "As soon as both services are confirmed logged in, call done(success=true) immediately."
             ),
-            llm=config.get_llm(session_id=str(uuid4())),
+            llm=patch_llm_for_minimax(config.get_llm(session_id=str(uuid4()))),
             max_actions_per_step=5,
-            use_vision="true",
+            use_vision=True,
             llm_call_timeout=300,
             max_failures=5,
             max_history_items=10,
@@ -218,7 +262,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     refresh_credentials()
 
     session_id = str(uuid4())
-    llm = config.get_llm(session_id=session_id)
+    llm = patch_llm_for_minimax(config.get_llm(session_id=session_id))
     # Parallel workers receive isolated copies of the authenticated profile.
     browser = BrowserSession(
         user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR),
@@ -355,7 +399,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         ),
         llm=llm,
         max_actions_per_step=5,
-        use_vision="true",
+        use_vision=True,
         llm_call_timeout=300,  # 5 minutes per step
         max_failures=4,
         max_history_items=6,
@@ -401,7 +445,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
                 from browser_use.llm.messages import UserMessage
 
                 async def _call():
-                    extraction_llm = config.get_llm()
+                    extraction_llm = patch_llm_for_minimax(config.get_llm())
                     resp = await asyncio.wait_for(
                         extraction_llm.ainvoke([UserMessage(content=prompt)]),
                         timeout=30,

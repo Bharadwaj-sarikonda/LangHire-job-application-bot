@@ -66,7 +66,7 @@ async def fetch_job_description(job: dict, worker_id: int, browser_profile_dir: 
         ),
         llm=llm,
         max_actions_per_step=5,
-        use_vision="true",
+        use_vision=True,
         browser_session=browser,
         max_failures=5,
         max_history_items=10,

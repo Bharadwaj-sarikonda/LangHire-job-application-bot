@@ -356,7 +356,7 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
         ),
         llm=llm,
         max_actions_per_step=5,
-        use_vision="true",
+        use_vision=True,
         llm_call_timeout=300,  # 5 minutes per step
         browser_session=browser,
         max_failures=10,
@@ -398,7 +398,7 @@ async def fetch_description_for_job(url: str, job: dict) -> str:
         ),
         llm=llm,
         max_actions_per_step=5,
-        use_vision="true",
+        use_vision=True,
         browser_session=browser,
         max_failures=5,
         message_compaction=True,

@@ -108,10 +108,21 @@ def create_llm(settings: dict, session_id: str | None = None):
     elif provider == "openai_compatible":
         from .openai_compatible_llm import OpenAICompatibleChatOpenAI
         cfg = settings.get("openai_compatible", {})
+        model = cfg.get("model", "default")
+        base_url = cfg.get("base_url")
+        if not base_url and "minimax" in model.lower():
+            base_url = "https://api.minimax.io/v1"
+        # MiniMax accepts the OpenAI wire format, but does not reliably honor
+        # Browser Use's strict ``json_schema`` response_format. Put the schema
+        # in the system prompt instead and parse final JSON client-side while
+        # preserving MiniMax's split reasoning output.
+        minimax_compat = "minimax" in model.lower()
         return OpenAICompatibleChatOpenAI(
-            model=cfg.get("model", "default"),
+            model=model,
             api_key=cfg.get("api_key") or "not-needed",
-            base_url=cfg.get("base_url"),
+            base_url=base_url,
+            add_schema_to_system_prompt=minimax_compat,
+            dont_force_structured_output=minimax_compat,
         )
 
     else:

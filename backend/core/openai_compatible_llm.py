@@ -19,6 +19,37 @@ from browser_use.llm.views import ChatInvokeCompletion
 class OpenAICompatibleChatOpenAI(ChatOpenAI):
     """Keep Browser Use's structured request, tolerating prose around valid JSON."""
 
+    def _minimax_prepare_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Normalize image blocks for MiniMax's OpenAI-compatible endpoint."""
+        if "minimax" not in str(self.model).lower():
+            return
+        for message in messages:
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "image_url":
+                    continue
+                image_url = block.get("image_url")
+                if isinstance(image_url, dict) and image_url.get("detail") == "auto":
+                    image_url["detail"] = "high"
+
+    def _minimax_model_kwargs(self) -> dict[str, Any]:
+        """Return MiniMax request extensions for every Browser Use entry point."""
+        if "minimax" not in str(self.model).lower():
+            return {}
+        current = dict(getattr(self, "model_kwargs", {}) or {})
+        extra_body = dict(current.get("extra_body", {}) or {})
+        # Keep MiniMax reasoning enabled, but request it in the separate
+        # reasoning_details field so Browser Use parses only final content as
+        # its AgentOutput JSON. MiniMax requires the thinking.type discriminator
+        # when the thinking object is present.
+        # MiniMax M3 supports adaptive or disabled thinking (not enabled).
+        extra_body.setdefault("thinking", {"type": "adaptive"})
+        extra_body.setdefault("reasoning_split", True)
+        current["extra_body"] = extra_body
+        return current
+
     @staticmethod
     def _extract_valid_json(raw: str, output_format: type[BaseModel]) -> BaseModel:
         def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -58,7 +89,9 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
             return await super().ainvoke(messages, output_format=output_format, **kwargs)
 
         openai_messages = self._serialize_messages(messages)
+        self._minimax_prepare_messages(openai_messages)
         model_params: dict[str, Any] = {}
+        model_params.update(self._minimax_model_kwargs())
         if self.temperature is not None:
             model_params["temperature"] = self.temperature
         if self.frequency_penalty is not None:
@@ -95,12 +128,20 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
                 ]
 
         try:
-            response = await self.get_client().chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                response_format=ResponseFormatJSONSchema(json_schema=response_format, type="json_schema"),
+            request_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": openai_messages,
                 **model_params,
-            )
+            }
+            # Some OpenAI-compatible providers (including MiniMax) reject or
+            # ignore the json_schema response_format.  The schema was already
+            # appended to the system prompt above, so let those providers
+            # return ordinary text and extract the single valid JSON object.
+            if not self.dont_force_structured_output:
+                request_kwargs["response_format"] = ResponseFormatJSONSchema(
+                    json_schema=response_format, type="json_schema"
+                )
+            response = await self.get_client().chat.completions.create(**request_kwargs)
             choice = response.choices[0] if response.choices else None
             if choice is None:
                 raise ModelProviderError(message="Invalid OpenAI chat completion response: missing choices.", status_code=502, model=self.name)
@@ -117,7 +158,22 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
                 parsed = output_format.model_validate_json(raw)
             except (ValueError, TypeError):
                 parsed = self._extract_valid_json(raw, output_format)
-            return ChatInvokeCompletion(completion=parsed, usage=self._get_usage(response), stop_reason=choice.finish_reason)
+            reasoning_details = getattr(choice.message, "reasoning_details", None)
+            thinking = None
+            if reasoning_details:
+                thinking_parts = []
+                for detail in reasoning_details:
+                    if isinstance(detail, dict) and detail.get("text"):
+                        thinking_parts.append(str(detail["text"]))
+                    elif getattr(detail, "text", None):
+                        thinking_parts.append(str(detail.text))
+                thinking = "".join(thinking_parts) or None
+            return ChatInvokeCompletion(
+                completion=parsed,
+                thinking=thinking,
+                usage=self._get_usage(response),
+                stop_reason=choice.finish_reason,
+            )
         except ModelProviderError:
             raise
         except RateLimitError as exc:

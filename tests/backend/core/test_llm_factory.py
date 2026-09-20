@@ -209,6 +209,17 @@ def test_create_llm_openai_compatible_defaults():
     assert llm.model == "default"
 
 
+def test_create_llm_minimax_defaults_to_openai_compatible_endpoint():
+    """MiniMax models use the OpenAI-compatible MiniMax endpoint when omitted."""
+    llm = llm_factory.create_llm(
+        {"provider": "openai_compatible", "openai_compatible": {"model": "MiniMax-M3", "api_key": "key"}}
+    )
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.base_url == "https://api.minimax.io/v1"
+    assert llm.add_schema_to_system_prompt is True
+    assert llm.dont_force_structured_output is True
+
+
 def test_create_llm_unknown_provider_raises():
     """An unrecognised provider raises a descriptive ValueError."""
     with pytest.raises(ValueError, match="Unknown LLM provider: mystery"):

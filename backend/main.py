@@ -1803,32 +1803,57 @@ async def smart_squash_qa():
         return _api_error("no_llm", "No LLM configured. Set up an LLM provider in Settings first.")
 
     llm = create_llm(llm_settings)
-    q_list = "\n".join(f"[{q['id']}] {q['question']}" for q in questions)
-    prompt = (
-        "Below is a numbered list of screening questions from job applications. "
-        "Find groups of questions that ask the same thing in different words. "
-        "Return ONLY a JSON array of merge instructions: [{\"keep\": <id_to_keep>, \"merge\": [<ids_to_merge>]}, ...]. "
-        "Only group questions that are truly semantically identical. If no duplicates exist, return [].\n\n"
-        f"{q_list}"
-    )
     try:
         from browser_use.llm.messages import UserMessage
-        response = await llm.ainvoke([UserMessage(content=prompt)])
-        import json as _json
-        text = response.completion if hasattr(response, "completion") else (response.content if hasattr(response, "content") else str(response))
-        # Extract JSON from response
         import re as _re_mod
-        match = _re_mod.search(r"\[.*\]", text, _re_mod.DOTALL)
-        if not match:
-            return {"success": True, "merged": 0}
-        groups = _json.loads(match.group(0))
-        merged_count = 0
-        for group in groups:
-            keep_id = group.get("keep")
-            merge_ids = group.get("merge", [])
-            for mid in merge_ids:
-                store.qa_merge(mid, keep_id)
-                merged_count += 1
+
+        async def squash_batch(batch: list[dict]) -> int:
+            q_list = "\n".join(f"[{q['id']}] {q['question']}" for q in batch)
+            prompt = (
+                "Below is a batch of screening questions from job applications. "
+                "Find groups that ask the same question in different words. "
+                "Treat questions as duplicates only when the requested fact and answer meaning are the same; "
+                "do not merge merely related questions. Preserve questions with different answers. "
+                "Return ONLY a JSON array of merge instructions: "
+                "[{\"keep\": <id_to_keep>, \"merge\": [<ids_to_merge>]}, ...]. "
+                "Use one canonical question per group. If no duplicates exist, return [].\n\n"
+                f"{q_list}"
+            )
+            response = await llm.ainvoke([UserMessage(content=prompt)])
+            text = response.completion if hasattr(response, "completion") else (response.content if hasattr(response, "content") else str(response))
+            match = _re_mod.search(r"\[.*\]", text, _re_mod.DOTALL)
+            if not match:
+                return 0
+            groups = json.loads(match.group(0))
+            active = {q["id"]: q for q in batch}
+            merged_count = 0
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                keep_id = group.get("keep")
+                merge_ids = group.get("merge", [])
+                if keep_id not in active or not isinstance(merge_ids, list):
+                    continue
+                for mid in merge_ids:
+                    if mid not in active or mid == keep_id:
+                        continue
+                    if active[mid].get("source_domain", "") != active[keep_id].get("source_domain", ""):
+                        continue
+                    if store.qa_merge(mid, keep_id):
+                        merged_count += 1
+                        active.pop(mid, None)
+            return merged_count
+
+        merged_count = store.qa_auto_squash()
+        # Send the complete set for each ATS/domain in one request so
+        # semantically identical questions cannot be split across batches.
+        # The current repository is LinkedIn-only, so this is one LLM call.
+        current = store.qa_list()
+        questions_by_domain: dict[str, list[dict]] = {}
+        for question in current:
+            questions_by_domain.setdefault(question.get("source_domain", ""), []).append(question)
+        for domain_questions in questions_by_domain.values():
+            merged_count += await squash_batch(domain_questions)
         return {"success": True, "merged": merged_count}
     except Exception as e:
         return _api_error("llm_error", f"Smart squash failed: {str(e)}", 500)

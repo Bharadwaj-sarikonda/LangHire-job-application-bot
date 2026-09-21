@@ -103,6 +103,42 @@ def test_get_domain_stats_empty(metrics):
     assert metrics.get_domain_stats() == []
 
 
+def test_orchestration_metrics_are_persisted_and_aggregated_by_ats(metrics):
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    metrics.record_run(
+        job_url="https://workday.test/jobs/1", job_title="Engineer", company="Acme",
+        website_domain="workday.test", ats_platform="Workday", success=True,
+        started_at=start, finished_at=start + timedelta(seconds=5),
+        orchestration_metrics={
+            "page_level_big_llm_calls": 2,
+            "local_operator_calls": 3,
+            "deterministic_actions": 8,
+            "local_recoveries": 2,
+            "fallback_calls": 0,
+            "stale_element_events": 1,
+            "validation_failures": 0,
+            "retries": 1,
+            "completed_fields": 4,
+            "total_fields": 4,
+            "estimated_expensive_llm_calls_avoided": 5,
+            "completion_rate": 1.0,
+        },
+        application_complete=True,
+    )
+    run = metrics.get_all_runs()[0]
+    assert run["page_level_big_llm_calls"] == 2
+    assert run["local_operator_calls"] == 3
+    assert run["application_complete"] == 1
+    assert run["field_completion_rate"] == pytest.approx(1.0)
+
+    ats = metrics.get_ats_stats()[0]
+    assert ats["ats_platform"] == "Workday"
+    assert ats["success_rate"] == pytest.approx(100.0)
+    assert ats["application_completion_rate"] == pytest.approx(100.0)
+    assert ats["field_completion_rate"] == pytest.approx(100.0)
+    assert ats["estimated_expensive_llm_calls_avoided"] == 5
+
+
 # ── get_overall_stats ────────────────────────────────────────────────────────
 
 def test_get_overall_stats(metrics):

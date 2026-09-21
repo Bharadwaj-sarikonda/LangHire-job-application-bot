@@ -1684,6 +1684,7 @@ async def get_dashboard():
                 "overall": metrics.get_overall_stats(),
                 "memory_impact": metrics.get_memory_impact(),
                 "domain_stats": metrics.get_domain_stats(),
+                "ats_stats": metrics.get_ats_stats(),
                 "trend": metrics.get_trend(window_size=5),
                 "recent_runs": metrics.get_all_runs(limit=10),
             }
@@ -1710,6 +1711,14 @@ async def get_metric_domains():
     metrics = _get_metrics_store()
     if metrics:
         return metrics.get_domain_stats()
+    return []
+
+
+@app.get("/metrics/ats")
+async def get_metric_ats():
+    metrics = _get_metrics_store()
+    if metrics:
+        return metrics.get_ats_stats()
     return []
 
 

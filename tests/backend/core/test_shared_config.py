@@ -441,7 +441,10 @@ def test_build_memory_context_injects_website_memory(base_profile, monkeypatch):
             return {}
 
         def get_domain_memories(self, url, limit=20):
-            return ["m1", "m2"]
+            return [
+                {"id": 1, "category": "navigation", "content": "m1"},
+                {"id": 2, "category": "form", "content": "m2"},
+            ]
 
         def extract_domain(self, url):
             return "acme.io"

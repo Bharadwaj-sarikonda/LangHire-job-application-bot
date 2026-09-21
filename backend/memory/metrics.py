@@ -8,6 +8,7 @@ the impact of the memory system on agent performance over time.
 import sqlite3
 import sys
 import threading
+from typing import Any
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -75,6 +76,19 @@ class MetricsStore:
                 memories_extracted INTEGER DEFAULT 0,
                 cost_usd          REAL,
                 run_type          TEXT DEFAULT 'apply',
+                page_level_big_llm_calls INTEGER DEFAULT 0,
+                local_operator_calls INTEGER DEFAULT 0,
+                deterministic_actions INTEGER DEFAULT 0,
+                local_recoveries INTEGER DEFAULT 0,
+                fallback_calls INTEGER DEFAULT 0,
+                stale_element_events INTEGER DEFAULT 0,
+                validation_failures INTEGER DEFAULT 0,
+                retry_count INTEGER DEFAULT 0,
+                completed_fields INTEGER DEFAULT 0,
+                total_fields INTEGER DEFAULT 0,
+                estimated_expensive_llm_calls_avoided INTEGER DEFAULT 0,
+                field_completion_rate REAL,
+                application_complete INTEGER,
                 created_at        TEXT NOT NULL
             );
 
@@ -103,6 +117,24 @@ class MetricsStore:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(run_metrics)").fetchall()}
         if "run_id" not in cols:
             conn.execute("ALTER TABLE run_metrics ADD COLUMN run_id TEXT")
+        additive_columns = {
+            "page_level_big_llm_calls": "INTEGER DEFAULT 0",
+            "local_operator_calls": "INTEGER DEFAULT 0",
+            "deterministic_actions": "INTEGER DEFAULT 0",
+            "local_recoveries": "INTEGER DEFAULT 0",
+            "fallback_calls": "INTEGER DEFAULT 0",
+            "stale_element_events": "INTEGER DEFAULT 0",
+            "validation_failures": "INTEGER DEFAULT 0",
+            "retry_count": "INTEGER DEFAULT 0",
+            "completed_fields": "INTEGER DEFAULT 0",
+            "total_fields": "INTEGER DEFAULT 0",
+            "estimated_expensive_llm_calls_avoided": "INTEGER DEFAULT 0",
+            "field_completion_rate": "REAL",
+            "application_complete": "INTEGER",
+        }
+        for name, declaration in additive_columns.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE run_metrics ADD COLUMN {name} {declaration}")
         conn.commit()
 
     def record_run(
@@ -122,24 +154,45 @@ class MetricsStore:
         error_message: str | None = None,
         run_type: str = "apply",
         run_id: str | None = None,
+        orchestration_metrics: dict[str, Any] | None = None,
+        application_complete: bool | None = None,
     ):
         """Record a completed application run."""
         duration = (finished_at - started_at).total_seconds()
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
+        orchestration_metrics = orchestration_metrics or {}
         conn.execute(
             """INSERT INTO run_metrics
                (run_id, job_url, job_title, company, website_domain, ats_platform,
                 success, error_message, started_at, finished_at, duration_seconds,
                 step_count, memories_injected, memories_extracted, cost_usd,
-                run_type, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                run_type, page_level_big_llm_calls, local_operator_calls,
+                deterministic_actions, local_recoveries, fallback_calls,
+                stale_element_events, validation_failures, retry_count,
+                completed_fields, total_fields, estimated_expensive_llm_calls_avoided,
+                field_completion_rate, application_complete, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id, job_url, job_title, company, website_domain, ats_platform,
                 int(success), error_message,
                 started_at.isoformat(), finished_at.isoformat(), duration,
                 step_count, memories_injected, memories_extracted, cost_usd,
-                run_type, now,
+                run_type,
+                int(orchestration_metrics.get("page_level_big_llm_calls", 0) or 0),
+                int(orchestration_metrics.get("local_operator_calls", 0) or 0),
+                int(orchestration_metrics.get("deterministic_actions", 0) or 0),
+                int(orchestration_metrics.get("local_recoveries", 0) or 0),
+                int(orchestration_metrics.get("fallback_calls", 0) or 0),
+                int(orchestration_metrics.get("stale_element_events", 0) or 0),
+                int(orchestration_metrics.get("validation_failures", 0) or 0),
+                int(orchestration_metrics.get("retries", 0) or 0),
+                int(orchestration_metrics.get("completed_fields", 0) or 0),
+                int(orchestration_metrics.get("total_fields", 0) or 0),
+                int(orchestration_metrics.get("estimated_expensive_llm_calls_avoided", 0) or 0),
+                orchestration_metrics.get("completion_rate"),
+                int(application_complete) if application_complete is not None else None,
+                now,
             ),
         )
         conn.commit()
@@ -168,12 +221,36 @@ class MetricsStore:
                 ROUND(AVG(step_count), 1)                           AS avg_steps,
                 ROUND(AVG(memories_injected), 1)                    AS avg_memories_injected,
                 ROUND(AVG(memories_extracted), 1)                   AS avg_memories_extracted,
+                ROUND(AVG(field_completion_rate) * 100, 1)         AS field_completion_rate,
+                SUM(estimated_expensive_llm_calls_avoided)          AS estimated_expensive_llm_calls_avoided,
                 ROUND(SUM(COALESCE(cost_usd, 0)), 4)               AS total_cost
             FROM run_metrics
             GROUP BY website_domain
             ORDER BY total_runs DESC
         """).fetchall()
         return [dict(r) for r in rows]
+
+    def get_ats_stats(self) -> list[dict]:
+        """Aggregate outcome and measured completion rates by ATS platform."""
+        conn = self._get_conn()
+        rows = conn.execute("""
+            SELECT
+                ats_platform,
+                COUNT(*) AS total_runs,
+                SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+                SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures,
+                ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) AS success_rate,
+                ROUND(AVG(application_complete) * 100, 1) AS application_completion_rate,
+                ROUND(AVG(field_completion_rate) * 100, 1) AS field_completion_rate,
+                SUM(estimated_expensive_llm_calls_avoided) AS estimated_expensive_llm_calls_avoided,
+                SUM(page_level_big_llm_calls) AS page_level_big_llm_calls,
+                SUM(local_operator_calls) AS local_operator_calls,
+                SUM(fallback_calls) AS fallback_calls
+            FROM run_metrics
+            GROUP BY ats_platform
+            ORDER BY total_runs DESC
+        """).fetchall()
+        return [dict(row) for row in rows]
 
     def get_overall_stats(self) -> dict:
         """Overall aggregate stats."""

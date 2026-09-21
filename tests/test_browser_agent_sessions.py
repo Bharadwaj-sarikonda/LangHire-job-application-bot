@@ -63,7 +63,7 @@ def test_browser_agents_share_the_token_efficient_settings():
     )
     expected = {
         "max_actions_per_step": 5,
-        "use_vision": "true",
+        "use_vision": True,
         "max_history_items": 10,
         "message_compaction": True,
     }
@@ -83,9 +83,9 @@ def test_browser_agents_share_the_token_efficient_settings():
         }
         expected_settings = {
             **expected,
-            "max_actions_per_step": 1
+            "max_history_items": 6
             if (path, function_name) == ("cli/apply_jobs.py", "apply_to_job")
-            else 5,
+            else 10,
         }
         assert settings == expected_settings, f"{path}:{function_name}"
 
@@ -130,6 +130,37 @@ def test_apply_agents_use_the_worker_specific_profile_when_provided():
     assert "user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR)" in apply_source
     assert "browser_profile_dir=browser_profile_dir" in tailored_source
     assert "user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR)" in tailored_source
+
+
+def test_page_orchestrator_fallback_reuses_the_agent_bound_to_the_same_browser_session():
+    node = _function_node("cli/apply_jobs.py", "apply_to_job")
+    agent_call = next(
+        item for item in ast.walk(node)
+        if isinstance(item, ast.Call) and isinstance(item.func, ast.Name) and item.func.id == "Agent"
+    )
+    browser_kw = next(keyword for keyword in agent_call.keywords if keyword.arg == "browser_session")
+    assert isinstance(browser_kw.value, ast.Name) and browser_kw.value.id == "browser"
+
+    fallback = next(
+        item for item in ast.walk(node)
+        if isinstance(item, ast.AsyncFunctionDef) and item.name == "_full_agent_fallback"
+    )
+    calls = [
+        item for item in ast.walk(fallback)
+        if isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute)
+    ]
+    assert any(
+        call.func.attr == "add_new_task"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "agent"
+        for call in calls
+    )
+    assert any(
+        call.func.attr == "run"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "agent"
+        for call in calls
+    )
 
 
 def test_force_stop_targets_temporary_worker_browsers_too():
@@ -222,7 +253,7 @@ def test_apply_agent_uses_native_reliability_features():
         if keyword.arg in {"use_vision", "loop_detection_enabled", "loop_detection_window"}
     }
     assert agent_settings == {
-        "use_vision": "true",
+        "use_vision": True,
         "loop_detection_enabled": True,
         "loop_detection_window": 5,
     }
@@ -259,6 +290,8 @@ def test_apply_agent_uses_native_reliability_features():
         if isinstance(item, ast.Call)
         and isinstance(item.func, ast.Attribute)
         and item.func.attr == "run"
+        and isinstance(item.func.value, ast.Name)
+        and item.func.value.id == "agent"
     )
     max_steps = next(keyword.value for keyword in run_call.keywords if keyword.arg == "max_steps")
     assert isinstance(max_steps, ast.Name) and max_steps.id == "MAX_STEPS"

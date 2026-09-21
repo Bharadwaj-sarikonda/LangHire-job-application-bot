@@ -21,6 +21,11 @@ if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from browser_use import Agent, BrowserSession
+from backend.apply.answer_planner import PageAnswerPlanner
+from backend.apply.browser_executor import BrowserExecutor, BrowserUseActionRunner
+from backend.apply.browser_operator import create_registered_browser_operator
+from backend.apply.feature_flags import ApplyFeatureFlags
+from backend.apply.orchestrator import PageOrchestrator
 
 
 def patch_llm_for_minimax(llm):
@@ -270,6 +275,8 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     # Always refresh credentials before each job to avoid mid-run expiry
     refresh_credentials()
 
+    feature_flags = ApplyFeatureFlags.from_env()
+
     session_id = str(uuid4())
     llm = patch_llm_for_minimax(config.get_llm(session_id=session_id))
     # Parallel workers receive isolated copies of the authenticated profile.
@@ -277,6 +284,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
         user_data_dir=str(browser_profile_dir or BROWSER_PROFILE_DIR),
         chromium_sandbox=(sys.platform != "linux"),
         cross_origin_iframes=True,
+        keep_alive=feature_flags.page_orchestrator,
     )
     mem_store = get_memory_store()
     # Count memories injected for metrics tracking
@@ -428,53 +436,126 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
     agent.tools.set_coordinate_clicking(True)
 
     try:
-        result = await agent.run(max_steps=MAX_STEPS)
+        orchestration_outcome = None
+        if feature_flags.page_orchestrator:
+            local_operator = None
+            if feature_flags.local_browser_operator:
+                try:
+                    local_operator = create_registered_browser_operator()
+                except Exception:
+                    # Operator plug-in failures must not prevent the existing
+                    # full Agent from taking over the same BrowserSession.
+                    local_operator = None
 
-        # Extract Q&A from history
-        _, new_questions = extract_from_history(result)
+            async def _full_agent_fallback(checkpoint: str):
+                agent.add_new_task(checkpoint)
+                return await agent.run(max_steps=MAX_STEPS)
+
+            executor = BrowserExecutor(
+                runner=BrowserUseActionRunner(tools=agent.tools),
+                sensitive_data=agent_sensitive_data,
+                available_file_paths=[resume_path],
+                approved_upload_path=resume_path,
+            )
+            orchestrator = PageOrchestrator(
+                browser_session=browser,
+                planner=PageAnswerPlanner(llm),
+                executor=executor,
+                operator=local_operator,
+                candidate_context=memory,
+                job_context={
+                    "title": title,
+                    "company": company,
+                    "location": job.get("location", ""),
+                    "description": str(job.get("description", ""))[:6000],
+                    "application_url": url,
+                    "easy_apply": easy_apply,
+                },
+                flags=feature_flags,
+                fallback=_full_agent_fallback,
+                initial_url=url,
+                max_steps=MAX_STEPS,
+                watchdog=progress_watchdog,
+            )
+            orchestration_outcome = await orchestrator.run()
+            result = orchestration_outcome.fallback_result
+        else:
+            result = await agent.run(max_steps=MAX_STEPS)
+
+        # Extract reusable Q&A from whichever execution path ran.
+        if result is not None:
+            _, new_questions = extract_from_history(result)
+            if orchestration_outcome is not None:
+                new_questions.update({
+                    orchestration_outcome.fields[field_id].label: answer.answer
+                    for field_id, answer in orchestration_outcome.answers.items()
+                    if field_id in orchestration_outcome.completed_field_ids
+                    and field_id in orchestration_outcome.fields
+                    and answer.status.value == "answered"
+                    and answer.answer
+                    and orchestration_outcome.fields[field_id].control_type not in {"password", "file"}
+                })
+        elif orchestration_outcome is not None:
+            new_questions = {
+                orchestration_outcome.fields[field_id].label: answer.answer
+                for field_id, answer in orchestration_outcome.answers.items()
+                if field_id in orchestration_outcome.completed_field_ids
+                and field_id in orchestration_outcome.fields
+                and answer.status.value == "answered"
+                and answer.answer
+                and orchestration_outcome.fields[field_id].control_type not in {"password", "file"}
+            }
+        else:
+            new_questions = {}
         domain = mem_store.extract_domain(url)
         await save_new_qa(new_questions, source_domain=domain)
 
         # Determine success/failure
-        success = result.is_successful()
-        errors = [e for e in result.errors() if e]
+        if result is not None:
+            success = result.is_successful()
+            errors = [e for e in result.errors() if e]
+        else:
+            success = bool(orchestration_outcome and orchestration_outcome.success)
+            errors = [orchestration_outcome.error] if orchestration_outcome and orchestration_outcome.error else []
 
         # ── Memory extraction (self-learning) ─────────────────────────────
         mem_store = get_memory_store()
         # 1. Marker-based: extract @@LEARNING tags the agent emitted
-        marker_learnings = extract_learnings_from_markers(result)
+        marker_learnings = extract_learnings_from_markers(result) if result is not None else []
         if marker_learnings:
             store_learnings(mem_store, marker_learnings, url, success)
         # 2. LLM-based: use the configured LLM to summarise the run into procedural learnings
         llm_learnings = []
-        try:
-            def _llm_call(prompt):
-                """Use the user's configured LLM for memory extraction."""
-                import asyncio
-                from browser_use.llm.messages import UserMessage
+        if result is not None:
+            try:
 
-                async def _call():
-                    extraction_llm = patch_llm_for_minimax(config.get_llm())
-                    resp = await asyncio.wait_for(
-                        extraction_llm.ainvoke([UserMessage(content=prompt)]),
-                        timeout=30,
-                    )
-                    return resp.completion if hasattr(resp, 'completion') else (resp.content if hasattr(resp, 'content') else str(resp))
+                def _llm_call(prompt):
+                    """Use the user's configured LLM for memory extraction."""
+                    import asyncio
+                    from browser_use.llm.messages import UserMessage
 
-                return asyncio.run(_call())
+                    async def _call():
+                        extraction_llm = patch_llm_for_minimax(config.get_llm())
+                        resp = await asyncio.wait_for(
+                            extraction_llm.ainvoke([UserMessage(content=prompt)]),
+                            timeout=30,
+                        )
+                        return resp.completion if hasattr(resp, 'completion') else (resp.content if hasattr(resp, 'content') else str(resp))
 
-            llm_learnings = await asyncio.to_thread(
-                extract_learnings_via_llm,
-                result,
-                job_url=url,
-                job_title=title,
-                success=success,
-                llm_call=_llm_call,
-            )
-            if llm_learnings:
-                store_learnings(mem_store, llm_learnings, url, success)
-        except Exception as mem_err:
-            print(f"    ⚠️  [W{worker_id}] Memory extraction failed (non-fatal): {mem_err}")
+                    return asyncio.run(_call())
+
+                llm_learnings = await asyncio.to_thread(
+                    extract_learnings_via_llm,
+                    result,
+                    job_url=url,
+                    job_title=title,
+                    success=success,
+                    llm_call=_llm_call,
+                )
+                if llm_learnings:
+                    store_learnings(mem_store, llm_learnings, url, success)
+            except Exception as mem_err:
+                print(f"    ⚠️  [W{worker_id}] Memory extraction failed (non-fatal): {mem_err}")
 
         # ── Record metrics ────────────────────────────────────────────────
         run_finished_at = datetime.now(timezone.utc)
@@ -484,10 +565,12 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
                 job_url=url, job_title=title, company=company,
                 website_domain=domain, ats_platform=mem_store.detect_ats_platform(domain),
                 success=success, started_at=run_started_at, finished_at=run_finished_at,
-                step_count=len(result.history),
+                step_count=len(result.history) if result is not None else (orchestration_outcome.metrics.deterministic_actions if orchestration_outcome else 0),
                 memories_injected=memories_injected_count,
                 memories_extracted=memories_extracted_count,
                 error_message=(errors[-1][:2000] if errors else None) if not success else None,
+                orchestration_metrics=orchestration_outcome.metrics.as_dict() if orchestration_outcome else None,
+                application_complete=success if orchestration_outcome else None,
             )
         except Exception as metrics_err:
             print(f"    ⚠️  [W{worker_id}] Metrics recording failed (non-fatal): {metrics_err}")
@@ -497,7 +580,7 @@ async def apply_to_job(job: dict, profile: dict, qa: dict, applied_labels: list[
             print(f"  ✅ [W{worker_id}] Applied: {title} at {company}")
             return "applied"
         else:
-            error_msg = errors[-1] if errors else (result.final_result() or "Agent reported failure")
+            error_msg = errors[-1] if errors else ((result.final_result() if result is not None else None) or "Agent reported failure")
             await save_job_status(url, "failed", error_msg[:2000])
             print(f"  ❌ [W{worker_id}] Failed: {title} at {company} — {error_msg[:100]}")
             return "failed"

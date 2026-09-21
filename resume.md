@@ -16,7 +16,7 @@ _Bachelor of Technology in Electronics and Communication_ Hyderabad, TS, India
 
 ## EXPERIENCE
 
-**Senior Generative AI Engineer** Nov 2025 – Present
+**Generative AI Engineer** Nov 2025 – Present
 
 NexTech Solutions LLC Tampa, Florida
 

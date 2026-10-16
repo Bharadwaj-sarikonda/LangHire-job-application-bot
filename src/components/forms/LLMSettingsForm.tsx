@@ -178,6 +178,7 @@ export default function LLMSettingsForm({ onSaved, compact }: LLMSettingsFormPro
 
   // Immediate save (for dropdown/radio changes)
   const immediateSave = useCallback(async (newSettings: LLMSettings) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
     setSaving(true);
     setSaved(false);
     try {
@@ -233,10 +234,20 @@ export default function LLMSettingsForm({ onSaved, compact }: LLMSettingsFormPro
     if (field === "model") immediateSave(ns); else autoSave(ns);
   };
 
+  const compatibleModel = (settings.openai_compatible?.model || "").trim().toLowerCase();
+  const isMiniMax = compatibleModel.includes("minimax");
+  const supportsDepth = !isMiniMax || compatibleModel === "minimax-m3.1-flash-preview";
+  const supportsThinkingToggle = compatibleModel === "minimax-m3";
+
   const updateOpenAICompatible = (field: string, value: string) => {
     const ns = { ...settings, openai_compatible: { ...settings.openai_compatible!, [field]: value } };
+    if (field === "model") {
+      ns.openai_compatible.reasoning_effort = "";
+      ns.openai_compatible.thinking_mode = "";
+    }
     setSettings(ns);
-    autoSave(ns);
+    setTestStatus("idle");
+    if (field === "reasoning_effort" || field === "thinking_mode") immediateSave(ns); else autoSave(ns);
   };
 
   const handleTest = async () => {
@@ -582,6 +593,21 @@ export default function LLMSettingsForm({ onSaved, compact }: LLMSettingsFormPro
               <input value={settings.openai_compatible?.model || ""} onChange={(e) => updateOpenAICompatible("model", e.target.value)} placeholder="meta-llama/Llama-3-70b-chat-hf" className="input-base" />
               <p className="text-xs text-muted-foreground mt-1">{t("openaiCompatible.modelHint")}</p>
             </div>
+            {supportsDepth && <div>
+              <label htmlFor="compatible-thinking" className="block text-sm font-semibold text-foreground mb-1.5">{t("thinking.label")}</label>
+              <select id="compatible-thinking" value={settings.openai_compatible?.reasoning_effort || ""} onChange={(e) => updateOpenAICompatible("reasoning_effort", e.target.value)} className="input-base" aria-describedby="compatible-thinking-hint">
+                {["", "low", "medium", "high", "xhigh", "max"].map((effort) => <option key={effort} value={effort}>{t(`thinking.${effort || "default"}`)}</option>)}
+              </select>
+              <p id="compatible-thinking-hint" className="text-xs text-muted-foreground mt-1">{t("thinking.hint")}</p>
+            </div>}
+            {supportsThinkingToggle && <div>
+              <label htmlFor="compatible-thinking-mode" className="block text-sm font-semibold text-foreground mb-1.5">{t("thinking.mode")}</label>
+              <select id="compatible-thinking-mode" value={settings.openai_compatible?.thinking_mode || ""} onChange={(e) => updateOpenAICompatible("thinking_mode", e.target.value)} className="input-base">
+                {["", "adaptive", "disabled"].map((mode) => <option key={mode} value={mode}>{t(`thinking.${mode || "default"}`)}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">{t("thinking.m3Hint")}</p>
+            </div>}
+            {isMiniMax && !supportsDepth && !supportsThinkingToggle && <p className="text-xs text-muted-foreground">{t("thinking.fixedHint")}</p>}
           </div>
         )}
       </div>

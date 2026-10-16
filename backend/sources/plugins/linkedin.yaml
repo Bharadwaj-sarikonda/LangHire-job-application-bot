@@ -15,6 +15,10 @@ auth_cookies:
 search_url: "https://www.linkedin.com/jobs/search/?keywords={title}&location={location}"
 
 filters:
+  - key: company
+    label: "Company names (comma-separated)"
+    type: text
+
   - key: date_posted
     label: "Posted within"
     type: select

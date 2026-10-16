@@ -117,12 +117,25 @@ def create_llm(settings: dict, session_id: str | None = None):
         # in the system prompt instead and parse final JSON client-side while
         # preserving MiniMax's split reasoning output.
         minimax_compat = "minimax" in model.lower()
+        model_id = model.strip().lower()
+        effort = cfg.get("reasoning_effort")
+        if minimax_compat and model_id != "minimax-m3.1-flash-preview":
+            effort = None  # Ignore stale depth settings from a previously selected model.
+        mode = cfg.get("thinking_mode") if model_id == "minimax-m3" else None
+        if mode and mode not in {"adaptive", "disabled"}:
+            raise ValueError("Unsupported thinking mode")
+        if effort and effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("Unsupported thinking depth")
+        thinking_options = {"reasoning_effort": effort, "reasoning_models": [model]} if effort else {}
+
         return OpenAICompatibleChatOpenAI(
             model=model,
             api_key=cfg.get("api_key") or "not-needed",
             base_url=base_url,
             add_schema_to_system_prompt=minimax_compat,
             dont_force_structured_output=minimax_compat,
+            thinking_mode=mode or None,
+            **thinking_options,
         )
 
     else:

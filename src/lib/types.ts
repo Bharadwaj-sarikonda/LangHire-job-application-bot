@@ -116,6 +116,8 @@ export interface LLMSettings {
     base_url: string;
     api_key: string;
     model: string;
+    thinking_mode?: "" | "adaptive" | "disabled";
+    reasoning_effort?: "" | "low" | "medium" | "high" | "xhigh" | "max";
   };
 }
 

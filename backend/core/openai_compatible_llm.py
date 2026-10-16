@@ -1,8 +1,9 @@
 """OpenAI-compatible adapter for responses wrapped in otherwise valid JSON prose."""
 
 import json
+from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Literal
 
 from openai import APIConnectionError, APIStatusError, RateLimitError
 from openai.types.chat import ChatCompletionContentPartTextParam
@@ -16,8 +17,13 @@ from browser_use.llm.schema import SchemaOptimizer
 from browser_use.llm.views import ChatInvokeCompletion
 
 
+@dataclass
 class OpenAICompatibleChatOpenAI(ChatOpenAI):
     """Keep Browser Use's structured request, tolerating prose around valid JSON."""
+
+    thinking_mode: Literal["adaptive", "disabled"] | None = None
+
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = "low"
 
     def _minimax_prepare_messages(self, messages: list[dict[str, Any]]) -> None:
         """Normalize image blocks for MiniMax's OpenAI-compatible endpoint."""
@@ -45,7 +51,7 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
         # its AgentOutput JSON. MiniMax requires the thinking.type discriminator
         # when the thinking object is present.
         # MiniMax M3 supports adaptive or disabled thinking (not enabled).
-        extra_body.setdefault("thinking", {"type": "adaptive"})
+        extra_body.setdefault("thinking", {"type": self.thinking_mode or "adaptive"})
         extra_body.setdefault("reasoning_split", True)
         current["extra_body"] = extra_body
         return current
@@ -85,8 +91,6 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
     async def ainvoke(
         self, messages: list[BaseMessage], output_format: type[BaseModel] | None = None, **kwargs: Any
     ) -> ChatInvokeCompletion[Any]:
-        if output_format is None:
-            return await super().ainvoke(messages, output_format=output_format, **kwargs)
 
         openai_messages = self._serialize_messages(messages)
         self._minimax_prepare_messages(openai_messages)
@@ -109,23 +113,24 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
             model_params.pop("temperature", None)
             model_params.pop("frequency_penalty", None)
 
-        response_format: JSONSchema = {
-            "name": "agent_output",
-            "strict": True,
-            "schema": SchemaOptimizer.create_optimized_json_schema(
-                output_format,
-                remove_min_items=self.remove_min_items_from_schema,
-                remove_defaults=self.remove_defaults_from_schema,
-            ),
-        }
-        if self.add_schema_to_system_prompt and openai_messages and openai_messages[0]["role"] == "system":
-            schema_text = f"\n<json_schema>\n{response_format}\n</json_schema>"
-            if isinstance(openai_messages[0]["content"], str):
-                openai_messages[0]["content"] += schema_text
-            elif isinstance(openai_messages[0]["content"], Iterable):
-                openai_messages[0]["content"] = list(openai_messages[0]["content"]) + [
-                    ChatCompletionContentPartTextParam(text=schema_text, type="text")
-                ]
+        if output_format is not None:
+            response_format: JSONSchema = {
+                "name": "agent_output",
+                "strict": True,
+                "schema": SchemaOptimizer.create_optimized_json_schema(
+                    output_format,
+                    remove_min_items=self.remove_min_items_from_schema,
+                    remove_defaults=self.remove_defaults_from_schema,
+                ),
+            }
+            if self.add_schema_to_system_prompt and openai_messages and openai_messages[0]["role"] == "system":
+                schema_text = f"\n<json_schema>\n{response_format}\n</json_schema>"
+                if isinstance(openai_messages[0]["content"], str):
+                    openai_messages[0]["content"] += schema_text
+                elif isinstance(openai_messages[0]["content"], Iterable):
+                    openai_messages[0]["content"] = list(openai_messages[0]["content"]) + [
+                        ChatCompletionContentPartTextParam(text=schema_text, type="text")
+                    ]
 
         try:
             request_kwargs: dict[str, Any] = {
@@ -137,7 +142,7 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
             # ignore the json_schema response_format.  The schema was already
             # appended to the system prompt above, so let those providers
             # return ordinary text and extract the single valid JSON object.
-            if not self.dont_force_structured_output:
+            if output_format is not None and not self.dont_force_structured_output:
                 request_kwargs["response_format"] = ResponseFormatJSONSchema(
                     json_schema=response_format, type="json_schema"
                 )
@@ -154,12 +159,14 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
                 raise ModelProviderError(message="Failed to parse structured output from model response", status_code=500, model=self.name)
 
             raw = choice.message.content
-            try:
-                parsed = output_format.model_validate_json(raw)
-            except (ValueError, TypeError):
-                parsed = self._extract_valid_json(raw, output_format)
+            parsed = raw
+            if output_format is not None:
+                try:
+                    parsed = output_format.model_validate_json(raw)
+                except (ValueError, TypeError):
+                    parsed = self._extract_valid_json(raw, output_format)
             reasoning_details = getattr(choice.message, "reasoning_details", None)
-            thinking = None
+            thinking = getattr(choice.message, "reasoning_content", None)
             if reasoning_details:
                 thinking_parts = []
                 for detail in reasoning_details:

@@ -84,6 +84,22 @@ describe("CollectTab", () => {
     vi.unstubAllGlobals();
   });
 
+  it("passes company names to LinkedIn collection and omits them for other sources", async () => {
+    mockGetPlugins.mockResolvedValue({ success: true, plugins: [{ ...linkedinPlugin, filters: [{ key: "company", label: "Company names (comma-separated)", type: "text", options: [], url_param: "", default: "" }] }, indeedPlugin] } as never);
+    const user = userEvent.setup();
+    render(<CollectTab onJobsChanged={onJobsChanged} />);
+    await user.type(await screen.findByLabelText("Company names (comma-separated)"), "Google, Microsoft");
+    await user.click(screen.getByRole("button", { name: /collector\.start/ }));
+    await user.click(await screen.findByRole("button", { name: "Got it, Start" }));
+    await waitFor(() => expect(mockStart).toHaveBeenCalledWith(undefined, 20, "linkedin", { company: "Google, Microsoft" }));
+    await user.click(screen.getByRole("button", { name: /collector\.stop/ }));
+    await user.click(screen.getByRole("button", { name: "Indeed" }));
+    expect(screen.queryByLabelText("Company names (comma-separated)")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /collector\.start/ }));
+    await user.click(await screen.findByRole("button", { name: "Got it, Start" }));
+    await waitFor(() => expect(mockStart).toHaveBeenLastCalledWith(undefined, 20, "indeed", {}));
+  });
+
   it("renders the collector panel and loads source plugins", async () => {
     render(<CollectTab onJobsChanged={onJobsChanged} />);
     expect(screen.getByText("collector.title")).toBeInTheDocument();

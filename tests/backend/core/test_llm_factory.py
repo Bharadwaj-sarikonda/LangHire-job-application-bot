@@ -414,3 +414,66 @@ async def test_test_connection_generic_error_passthrough():
 
     with pytest.raises(RuntimeError, match="totally unexpected boom"):
         await llm_factory.test_connection(_FakeLLM(bad))
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+@pytest.mark.parametrize("structured", [False, True])
+async def test_compatible_thinking_effort_reaches_requests(effort, structured):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+    from pydantic import BaseModel
+    from browser_use.llm.messages import UserMessage
+    from core.openai_compatible_llm import OpenAICompatibleChatOpenAI
+
+    class Answer(BaseModel):
+        answer: str
+
+    llm = llm_factory.create_llm({
+        "provider": "openai_compatible",
+        "openai_compatible": {"model": "MiniMax-M3.1-Flash-Preview", "reasoning_effort": effort},
+    })
+    create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content='{"answer":"hello"}', refusal=None), finish_reason="stop")],
+        usage=None,
+    ))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with patch.object(OpenAICompatibleChatOpenAI, "get_client", return_value=client):
+        await llm.ainvoke([UserMessage(content="hello")], output_format=Answer if structured else None)
+    assert create.call_args.kwargs["reasoning_effort"] == effort
+
+
+def test_compatible_default_does_not_force_thinking_effort():
+    llm = llm_factory.create_llm({
+        "provider": "openai_compatible",
+        "openai_compatible": {"model": "MiniMax-M3", "reasoning_effort": ""},
+    })
+    assert "MiniMax-M3" not in llm.reasoning_models
+
+@pytest.mark.parametrize("model", ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"])
+def test_minimax_ignores_stale_depth_and_unsupported_toggle(model):
+    llm = llm_factory.create_llm({"provider": "openai_compatible", "openai_compatible": {
+        "model": model, "reasoning_effort": "max", "thinking_mode": "disabled",
+    }})
+    assert model not in llm.reasoning_models
+    assert llm._minimax_model_kwargs()["extra_body"]["thinking"]["type"] == ("disabled" if model == "MiniMax-M3" else "adaptive")
+
+@pytest.mark.parametrize("structured", [False, True])
+async def test_m3_disabled_thinking_reaches_requests(structured):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+    from pydantic import BaseModel
+    from browser_use.llm.messages import UserMessage
+    from core.openai_compatible_llm import OpenAICompatibleChatOpenAI
+
+    class Answer(BaseModel):
+        answer: str
+
+    llm = llm_factory.create_llm({"provider": "openai_compatible", "openai_compatible": {
+        "model": "MiniMax-M3", "thinking_mode": "disabled", "reasoning_effort": "high",
+    }})
+    create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content='{"answer":"hello"}'), finish_reason="stop")], usage=None))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with patch.object(OpenAICompatibleChatOpenAI, "get_client", return_value=client):
+        await llm.ainvoke([UserMessage(content="hello")], output_format=Answer if structured else None)
+    assert create.call_args.kwargs["extra_body"]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in create.call_args.kwargs

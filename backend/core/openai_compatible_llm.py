@@ -91,6 +91,8 @@ class OpenAICompatibleChatOpenAI(ChatOpenAI):
     async def ainvoke(
         self, messages: list[BaseMessage], output_format: type[BaseModel] | None = None, **kwargs: Any
     ) -> ChatInvokeCompletion[Any]:
+        if output_format is None and "minimax" not in str(self.model).lower():
+            return await super().ainvoke(messages, output_format=output_format, **kwargs)
 
         openai_messages = self._serialize_messages(messages)
         self._minimax_prepare_messages(openai_messages)

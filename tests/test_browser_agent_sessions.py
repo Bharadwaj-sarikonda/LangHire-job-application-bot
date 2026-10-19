@@ -181,7 +181,9 @@ def test_linkedin_collector_hands_results_to_deterministic_dom_collection():
     assert "keep_alive=True" in source
     assert "directly_open_url=False" in source
     assert "await browser.kill()" in source
-    assert source.count("await browser.must_get_current_page()") == 1
+    # Reacquire the active search tab after the company-filter agent finishes.
+    assert source.count("await browser.must_get_current_page()") == 2
+    assert "_verify_linkedin_company_filter(current_url, companies, search_url)" in source
 
 
 def test_linkedin_collection_limit_is_shared_across_role_iteration():

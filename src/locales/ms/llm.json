@@ -93,5 +93,20 @@
     "testConnection": "Uji Sambungan",
     "connectionSuccessful": "Sambungan berjaya!",
     "connectionFailed": "Sambungan gagal."
+  },
+  "thinking": {
+    "label": "Thinking depth",
+    "default": "Model default",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "Extra high",
+    "max": "Max",
+    "hint": "Choose how deeply the model reasons. Higher levels can take longer and use more tokens. Requires a model and server that support reasoning effort; Model default sends no override.",
+    "mode": "Thinking",
+    "adaptive": "On (adaptive)",
+    "disabled": "Off",
+    "m3Hint": "MiniMax-M3 supports thinking on or off, but does not support adjustable thinking depth.",
+    "fixedHint": "This MiniMax model does not support adjustable thinking depth. M2.x models always think."
   }
 }

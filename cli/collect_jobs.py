@@ -328,6 +328,9 @@ async def collect_for_title(title: str, existing_jobs: dict, profile: dict, max_
     from urllib.parse import quote
     search_url = f"https://www.linkedin.com/jobs/search/?keywords={quote(title)}&location={quote(locations)}"
 
+    # Preserve the default time window when only a company is supplied.
+    # An explicitly empty date value still means any time.
+    filters = {"date_posted": "r604800", **(filters or {})}
     # Append filter parameters from the UI
     if filters:
         # Map of known LinkedIn filter keys to URL params

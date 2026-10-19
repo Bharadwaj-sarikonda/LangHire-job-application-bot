@@ -265,6 +265,45 @@ describe("LLMSettingsForm", () => {
     });
   });
 
+  it("loads thinking depth, saves changes, and passes the choice to connection tests", async () => {
+    mockGetLLMSettings.mockResolvedValue({ ...baseSettings, provider: "openai_compatible", openai_compatible: { base_url: "https://api.minimax.io/v1", api_key: "", model: "MiniMax-M3.1-Flash-Preview", reasoning_effort: "high" } } as never);
+    const user = userEvent.setup();
+    render(<LLMSettingsForm />);
+    const thinking = await screen.findByRole("combobox", { name: "thinking.label" });
+    expect(thinking).toHaveValue("high");
+    await user.selectOptions(thinking, "max");
+    await waitFor(() => expect(mockSaveLLMSettings).toHaveBeenCalledWith(expect.objectContaining({ openai_compatible: expect.objectContaining({ reasoning_effort: "max" }) })));
+    await user.click(screen.getByRole("button", { name: /status\.testConnection/ }));
+    expect(mockTestLLMConnection).toHaveBeenCalledWith(expect.objectContaining({ openai_compatible: expect.objectContaining({ reasoning_effort: "max" }) }));
+    await user.selectOptions(thinking, "");
+    await waitFor(() => expect(mockSaveLLMSettings).toHaveBeenLastCalledWith(expect.objectContaining({ openai_compatible: expect.objectContaining({ reasoning_effort: "" }) })));
+  });
+
+  it.each(["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"])("shows only supported thinking controls for %s", async (model) => {
+    mockGetLLMSettings.mockResolvedValue({ ...baseSettings, provider: "openai_compatible", openai_compatible: { base_url: "", api_key: "", model, reasoning_effort: "max" } } as never);
+    render(<LLMSettingsForm />);
+    await screen.findByText("selectProvider");
+    expect(screen.queryByRole("combobox", { name: "thinking.label" })).not.toBeInTheDocument();
+    if (model === "MiniMax-M3") {
+      expect(screen.getByRole("combobox", { name: "thinking.mode" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "thinking.max" })).not.toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+      expect(screen.getByText("thinking.fixedHint")).toBeInTheDocument();
+    }
+  });
+
+  it("clears stale thinking settings when the model changes", async () => {
+    mockGetLLMSettings.mockResolvedValue({ ...baseSettings, provider: "openai_compatible", openai_compatible: { base_url: "", api_key: "", model: "MiniMax-M3.1-Flash-Preview", reasoning_effort: "max" } } as never);
+    const user = userEvent.setup();
+    render(<LLMSettingsForm />);
+    const model = await screen.findByPlaceholderText("meta-llama/Llama-3-70b-chat-hf");
+    await user.clear(model);
+    await user.type(model, "MiniMax-M2.7");
+    await waitFor(() => expect(mockSaveLLMSettings).toHaveBeenLastCalledWith(expect.objectContaining({ openai_compatible: expect.objectContaining({ model: "MiniMax-M2.7", reasoning_effort: "", thinking_mode: "" }) })), { timeout: 2000 });
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
   describe("provider config fields", () => {
     it("bedrock: toggling auth mode to keys reveals access/secret key inputs", async () => {
       const user = userEvent.setup();

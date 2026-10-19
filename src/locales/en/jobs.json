@@ -27,7 +27,8 @@
     "start": "Start",
     "startingCollection": "Starting collection...",
     "collectedProgress": "Collected {{collected}} of {{max}} jobs",
-    "collectionLog": "Collection Log"
+    "collectionLog": "Collection Log",
+    "companyHint": "Example: Google, Microsoft. Applies LinkedIn’s Company filter before collecting. Use company names as shown on LinkedIn. Leave blank for any company."
   },
   "emptyState": {
     "noMatching": "No matching jobs",

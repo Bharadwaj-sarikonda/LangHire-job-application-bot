@@ -2,6 +2,8 @@ import json
 import sys
 import types
 
+import pytest
+
 from cli import collect_jobs
 
 
@@ -119,10 +121,14 @@ async def test_next_page_waits_for_results_page_to_change(monkeypatch):
     assert page.url.endswith("start=25")
 
 
-async def test_collection_handoff_keeps_and_reuses_prefiltered_page(monkeypatch):
+@pytest.mark.parametrize("filters", [{}, {"company": "Acme"}, {"company": "Acme", "date_posted": ""}, {"company": "Acme", "date_posted": "r86400", "job_type": "F"}])
+async def test_collection_handoff_keeps_and_reuses_prefiltered_page(monkeypatch, filters):
     calls = {}
 
     class Page:
+        async def evaluate(self, script):
+            return calls["search_url"] + "&f_C=123"
+
         async def goto(self, url):
             calls["search_url"] = url
 
@@ -173,11 +179,40 @@ async def test_collection_handoff_keeps_and_reuses_prefiltered_page(monkeypatch)
         {},
         {"target_locations": ["United States"]},
         max_jobs=10,
+        filters=filters,
     )
 
     browser = calls["browser"]
     assert calls["browser_kwargs"]["keep_alive"] is True
     assert calls["agent_kwargs"]["directly_open_url"] is False
     assert calls["collection_page"] is browser.page
-    assert browser.current_page_calls == 1
+    assert browser.current_page_calls == (2 if filters.get("company") else 1)
     assert calls["killed"] is True
+    assert ("COMPANY FILTER" in calls["agent_kwargs"]["task"]) == bool(filters.get("company"))
+    from urllib.parse import parse_qs, urlparse
+    query = parse_qs(urlparse(calls["search_url"]).query)
+    if filters.get("date_posted", "r604800"):
+        assert query["f_TPR"] == [filters.get("date_posted", "r604800")]
+    else:
+        assert "f_TPR" not in query
+    if filters.get("job_type"):
+        assert query["f_JT"] == [filters["job_type"]]
+
+
+@pytest.mark.parametrize("company_param", ["", "&f_C=", "&f_C=Acme", "&f_C=123,456"])
+def test_company_verification_rejects_missing_invalid_or_extra_ids(company_param):
+    base = "https://www.linkedin.com/jobs/search/?keywords=Engineer&f_TPR=r86400"
+    with pytest.raises(RuntimeError, match="company filter"):
+        collect_jobs._verify_linkedin_company_filter(base + company_param, ["Acme"], base)
+
+
+def test_company_verification_preserves_other_filters_and_supports_multiple():
+    base = "https://www.linkedin.com/jobs/search/?keywords=Engineer&f_TPR=r86400&f_JT=F"
+    collect_jobs._verify_linkedin_company_filter(base + "&f_C=123%2C456", ["Acme", "Example"], base)
+    with pytest.raises(RuntimeError, match="filters changed"):
+        collect_jobs._verify_linkedin_company_filter(base.replace("r86400", "r604800") + "&f_C=123", ["Acme"], base)
+
+
+def test_company_verification_rejects_nonsearch_page():
+    with pytest.raises(RuntimeError, match="search page"):
+        collect_jobs._verify_linkedin_company_filter("https://www.linkedin.com/feed/?f_C=123", ["Acme"], "")

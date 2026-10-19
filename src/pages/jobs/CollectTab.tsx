@@ -129,7 +129,7 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
         collectTitle || undefined,
         collectMaxJobs ? Number(collectMaxJobs) : undefined,
         collectSource,
-        collectFilters
+        Object.fromEntries(Object.entries(collectFilters).filter(([key]) => selectedPlugin?.filters.some((filter) => filter.key === key)))
       );
       if (res.success) {
         setCollecting(true);
@@ -279,11 +279,12 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
           <div className="grid grid-cols-2 gap-3 mb-4">
             {selectedPlugin.filters.map((filter) => (
               <div key={filter.key}>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                <label htmlFor={`collect-filter-${filter.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
                   {filter.label}
                 </label>
                 {filter.type === "select" ? (
                   <select
+                    id={`collect-filter-${filter.key}`}
                     value={collectFilters[filter.key] || filter.default || ""}
                     onChange={(e) =>
                       setCollectFilters((prev) => ({
@@ -303,6 +304,7 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
                   </select>
                 ) : (
                   <input
+                    id={`collect-filter-${filter.key}`}
                     type="text"
                     value={collectFilters[filter.key] || ""}
                     onChange={(e) =>
@@ -316,6 +318,7 @@ export default function CollectTab({ onJobsChanged }: CollectTabProps) {
                     placeholder={filter.label}
                   />
                 )}
+                {collectSource === "linkedin" && filter.key === "company" && <p className="text-xs text-muted-foreground mt-1">{t("collector.companyHint")}</p>}
               </div>
             ))}
           </div>
